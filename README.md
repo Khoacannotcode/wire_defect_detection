@@ -47,7 +47,11 @@ python benchmark.py
 
 ### 7. Start Real-time Detection
 ```bash
+# Option 1: NCNN inference (faster, ARM optimized)
 python rpi_inference_ncnn.py
+
+# Option 2: ONNX Runtime inference (fallback, more compatible)
+python rpi_inference_onnx.py
 ```
 
 ## 📊 Performance
@@ -116,7 +120,8 @@ shipping/
 ├── TROUBLESHOOTING.md          # Detailed troubleshooting guide
 ├── DEPLOYMENT_CHECKLIST.md     # Step-by-step deployment checklist
 ├── setup_rpi.sh                # Automated setup script
-├── rpi_inference_ncnn.py       # Main inference script
+├── rpi_inference_ncnn.py       # NCNN inference script (primary)
+├── rpi_inference_onnx.py       # ONNX Runtime inference (fallback)
 ├── convert_to_ncnn.py          # ONNX to NCNN converter
 ├── test_deployment.py          # Deployment validation script
 ├── benchmark.py                # Performance benchmark tool

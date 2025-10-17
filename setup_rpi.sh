@@ -57,7 +57,13 @@ fi
 
 # Install camera libraries
 echo "[3/7] Installing camera libraries..."
-sudo apt install -y python3-picamera2 python3-libcamera
+sudo apt install -y python3-picamera2 python3-libcamera libcamera-apps
+
+# Install picamera2 via system package (more reliable than pip)
+echo "Installing picamera2 via system package..."
+if ! python3 -c "import picamera2" 2>/dev/null; then
+    echo "System picamera2 not working, will install via pip later..."
+fi
 
 # Create virtual environment
 echo "[4/7] Creating Python virtual environment..."
@@ -70,42 +76,112 @@ pip install --upgrade pip
 
 # Install Python packages
 echo "[6/7] Installing Python packages..."
-pip install -r requirements.txt
+
+# Install basic packages first
+pip install --upgrade pip setuptools wheel
+
+# Install packages one by one with error handling
+echo "Installing numpy..."
+pip install "numpy>=1.21.0,<1.25.0"
+
+echo "Installing OpenCV..."
+pip install "opencv-python-headless>=4.5.0,<4.9.0"
+
+echo "Installing Pillow..."
+pip install "pillow>=8.0.0,<10.0.0"
+
+echo "Installing tqdm..."
+pip install "tqdm>=4.60.0"
+
+# Install picamera2 if system version doesn't work
+echo "Checking picamera2..."
+if ! python3 -c "from picamera2 import Picamera2" 2>/dev/null; then
+    echo "Installing picamera2 via pip..."
+    pip install picamera2 || echo "Warning: picamera2 installation failed, using system version"
+fi
 
 # Install NCNN Python binding
 echo "[7/7] Installing NCNN (this may take a few minutes)..."
 
+# Check Python version first
+PYTHON_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+echo "Detected Python version: $PYTHON_VERSION"
+
 # Try multiple installation methods
 echo "Attempting NCNN installation..."
 
-# Method 1: Try pre-built wheel
+# Method 1: Try pre-built wheel if available
 if [ -f "ncnn-python-*.whl" ]; then
     echo "Method 1: Installing from local wheel file..."
-    pip install ncnn-python-*.whl
-elif pip install ncnn-python --timeout 300 2>/dev/null; then
-    echo "Method 1: Successfully installed ncnn-python from PyPI"
+    pip install ncnn-python-*.whl && echo "✅ NCNN installed from local wheel"
 else
-    echo "Method 1 failed, trying alternative approaches..."
+    echo "Method 1: Trying PyPI installation..."
     
-    # Method 2: Install with specific flags
-    echo "Method 2: Installing with build flags..."
-    pip install ncnn-python --no-cache-dir --verbose --timeout 600 2>/dev/null || {
+    # Check if we can reach PyPI and if ncnn-python exists for this Python version
+    if pip install ncnn-python --dry-run 2>/dev/null; then
+        pip install ncnn-python --timeout 300 && echo "✅ NCNN installed from PyPI"
+    else
+        echo "Method 1 failed: No compatible ncnn-python wheel found"
+        echo "Method 2: Trying to build from source..."
         
-        # Method 3: Build from source with specific settings
-        echo "Method 2 failed, trying Method 3: Build from source..."
-        export CMAKE_ARGS="-DNCNN_VULKAN=OFF -DNCNN_BUILD_EXAMPLES=OFF"
-        pip install ncnn-python --no-binary :all: --timeout 900 2>/dev/null || {
+        # Install build dependencies
+        sudo apt install -y git cmake ninja-build
+        
+        # Method 2: Build from source
+        if command -v git >/dev/null 2>&1; then
+            echo "Building NCNN from source (this may take 20-30 minutes)..."
             
-            # Method 4: Last resort - minimal build
-            echo "Method 3 failed, trying Method 4: Minimal build..."
-            pip install --upgrade pip setuptools wheel
-            pip install ncnn-python --no-deps --force-reinstall 2>/dev/null || {
-                echo "❌ All NCNN installation methods failed!"
-                echo "You may need to install manually or use alternative inference engine."
-                echo "See TROUBLESHOOTING.md for manual installation steps."
+            # Clone and build NCNN
+            cd /tmp
+            git clone --depth 1 https://github.com/Tencent/ncnn.git || {
+                echo "Failed to clone NCNN repository"
+                cd - && return 1
             }
-        }
-    }
+            
+            cd ncnn
+            mkdir -p build && cd build
+            
+            # Configure build for Raspberry Pi
+            cmake -GNinja \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DNCNN_VULKAN=OFF \
+                -DNCNN_OPENMP=ON \
+                -DNCNN_BUILD_EXAMPLES=OFF \
+                -DNCNN_BUILD_TOOLS=OFF \
+                -DNCNN_BUILD_BENCHMARK=OFF \
+                -DNCNN_PYTHON=ON \
+                .. || {
+                echo "CMake configuration failed"
+                cd - && return 1
+            }
+            
+            # Build (use all available cores)
+            ninja -j$(nproc) || {
+                echo "Build failed, trying with single thread..."
+                ninja -j1 || {
+                    echo "❌ NCNN build failed completely"
+                    cd - && return 1
+                }
+            }
+            
+            # Install Python bindings
+            cd ../python
+            pip install . && echo "✅ NCNN built and installed from source"
+            
+            # Clean up
+            cd /tmp && rm -rf ncnn
+            cd -
+        else
+            echo "❌ Git not available, cannot build from source"
+            echo ""
+            echo "NCNN installation failed. You have these options:"
+            echo "1. Use ONNX Runtime instead (slower but more compatible)"
+            echo "2. Manually install ncnn-python following TROUBLESHOOTING.md"
+            echo "3. Use a different inference engine"
+            echo ""
+            echo "The system will continue without NCNN..."
+        fi
+    fi
 fi
 
 # Enable camera interface

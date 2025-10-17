@@ -85,10 +85,12 @@ def test_ncnn_model():
         
         if not os.path.exists(param_path):
             print(f"  ❌ Param file missing: {param_path}")
+            print("  💡 Run: python convert_to_ncnn.py")
             return False
             
         if not os.path.exists(bin_path):
             print(f"  ❌ Bin file missing: {bin_path}")
+            print("  💡 Run: python convert_to_ncnn.py")
             return False
         
         ret1 = net.load_param(param_path)
@@ -101,8 +103,39 @@ def test_ncnn_model():
             print(f"  ❌ NCNN model loading failed (param: {ret1}, bin: {ret2})")
             return False
             
+    except ImportError:
+        print("  ⚠️  NCNN not installed, testing ONNX Runtime fallback...")
+        return test_onnx_model()
     except Exception as e:
         print(f"  ❌ NCNN model test failed: {e}")
+        return test_onnx_model()
+
+def test_onnx_model():
+    """Test ONNX Runtime model loading (fallback)"""
+    print("\n🔄 Testing ONNX Runtime model loading...")
+    
+    try:
+        import onnxruntime as ort
+        
+        model_path = "models/best_cropped.onnx"
+        if not os.path.exists(model_path):
+            print(f"  ❌ ONNX model missing: {model_path}")
+            return False
+        
+        # Create session
+        providers = ['CPUExecutionProvider']
+        session = ort.InferenceSession(model_path, providers=providers)
+        
+        print("  ✅ ONNX Runtime model loaded successfully")
+        print("  💡 Use: python rpi_inference_onnx.py")
+        return True
+        
+    except ImportError:
+        print("  ❌ ONNX Runtime not installed")
+        print("  💡 Install with: pip install onnxruntime")
+        return False
+    except Exception as e:
+        print(f"  ❌ ONNX model test failed: {e}")
         return False
 
 def test_camera():

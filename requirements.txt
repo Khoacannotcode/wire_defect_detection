@@ -1,6 +1,5 @@
-numpy
-opencv-python-headless
-picamera2
-ncnn-python
-pillow
-tqdm
+numpy>=1.21.0,<1.25.0
+opencv-python-headless>=4.5.0,<4.9.0
+pillow>=8.0.0,<10.0.0
+tqdm>=4.60.0
+onnxruntime>=1.12.0
