@@ -105,20 +105,22 @@ class LiveWireDetector:
         detections = []
         output = outputs[0]
         
+        # YOLO output format: (1, 7, num_detections)
         if len(output.shape) == 3:
-            output = output[0]  # Remove batch dimension
+            output = output[0]  # Remove batch dimension: (7, num_detections)
+        
+        # Transpose to get (num_detections, 7)
+        output = output.T  # Shape: (num_detections, 7)
         
         for detection in output:
             if len(detection) >= 6:
-                conf = detection[4]
-                if conf > self.conf_threshold:
-                    class_id = int(detection[5])
-                    if class_id < len(self.class_names):
-                        detections.append({
-                            'class_id': class_id,
-                            'class_name': self.class_names[class_id],
-                            'confidence': conf
-                        })
+                x_center, y_center, width, height, conf, class_id = detection[:6]
+                if conf > self.conf_threshold and int(class_id) < len(self.class_names):
+                    detections.append({
+                        'class_id': int(class_id),
+                        'class_name': self.class_names[int(class_id)],
+                        'confidence': conf
+                    })
         
         return detections, inference_time
     
