@@ -1,9 +1,51 @@
 import cv2
 import numpy as np
-import ncnn
-from picamera2 import Picamera2
+import sys
 import time
 from collections import deque
+
+# Try to import ncnn
+try:
+    import ncnn
+except ImportError:
+    print("❌ ncnn-python not available")
+    print("Please use ONNX Runtime version: python rpi_inference_onnx.py")
+    sys.exit(1)
+
+# Try to import picamera2 with fallback
+try:
+    from picamera2 import Picamera2
+except ImportError:
+    print("❌ picamera2 not available in virtual environment")
+    print("Trying to use system picamera2...")
+    
+    # Try to add system packages to Python path
+    import site
+    import subprocess
+    
+    try:
+        result = subprocess.run([
+            'python3', '-c', 
+            'import site; print(site.getsitepackages()[0])'
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            system_site = result.stdout.strip()
+            if system_site not in sys.path:
+                sys.path.insert(0, system_site)
+                print(f"Added system packages: {system_site}")
+        
+        from picamera2 import Picamera2
+        print("✅ Successfully imported system picamera2")
+        
+    except ImportError:
+        print("❌ Still cannot import picamera2")
+        print()
+        print("Solutions:")
+        print("1. Install in venv: pip install picamera2")
+        print("2. Use system Python: deactivate && python3 rpi_inference_ncnn.py")
+        print("3. Link system package: ln -s /usr/lib/python3/dist-packages/picamera2 venv/lib/python*/site-packages/")
+        sys.exit(1)
 
 class NCNNWireDefectDetector:
     """Wire Defect Detector using NCNN framework"""

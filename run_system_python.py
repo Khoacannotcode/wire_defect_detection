@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Wire Defect Detection using ONNX Runtime (Fallback for NCNN)
-Alternative inference engine when NCNN is not available
+Wire Defect Detection using system Python (no virtual environment)
+This version uses system packages directly to avoid import issues
 """
 
 import cv2
@@ -11,61 +11,41 @@ from collections import deque
 import sys
 import os
 
+# Add system packages to path
+sys.path.insert(0, '/usr/lib/python3/dist-packages')
+
 try:
     from picamera2 import Picamera2
+    print("✅ Using system picamera2")
 except ImportError:
-    print("❌ picamera2 not available in virtual environment")
-    print("Trying to use system picamera2...")
-    
-    # Try to add system packages to Python path
-    import site
-    import subprocess
-    
-    # Get system site-packages path
-    try:
-        result = subprocess.run([
-            'python3', '-c', 
-            'import site; print(site.getsitepackages()[0])'
-        ], capture_output=True, text=True)
-        
-        if result.returncode == 0:
-            system_site = result.stdout.strip()
-            if system_site not in sys.path:
-                sys.path.insert(0, system_site)
-                print(f"Added system packages: {system_site}")
-        
-        # Try import again
-        from picamera2 import Picamera2
-        print("✅ Successfully imported system picamera2")
-        
-    except ImportError:
-        print("❌ Still cannot import picamera2")
-        print()
-        print("Solutions:")
-        print("1. Install in venv: pip install picamera2")
-        print("2. Use system Python: deactivate && python3 rpi_inference_onnx.py")
-        print("3. Link system package: ln -s /usr/lib/python3/dist-packages/picamera2 venv/lib/python*/site-packages/")
-        sys.exit(1)
+    print("❌ picamera2 not found even in system packages")
+    print("Please install: sudo apt install python3-picamera2")
+    sys.exit(1)
 
 try:
     import onnxruntime as ort
+    print("✅ Using ONNX Runtime")
 except ImportError:
-    print("Installing ONNX Runtime...")
-    os.system("pip install onnxruntime")
-    import onnxruntime as ort
+    print("Installing ONNX Runtime for system Python...")
+    os.system("pip3 install onnxruntime --user")
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        print("❌ Could not install ONNX Runtime")
+        print("Try: sudo apt install python3-pip && pip3 install onnxruntime --user")
+        sys.exit(1)
 
-class ONNXWireDefectDetector:
-    """Wire Defect Detector using ONNX Runtime"""
+class SystemONNXDetector:
+    """Wire Defect Detector using system Python and ONNX Runtime"""
     
     def __init__(self, model_path, conf_threshold=0.25):
-        # Initialize ONNX Runtime session
         print(f"Loading ONNX model from: {model_path}")
         
         # Configure ONNX Runtime for CPU
         providers = ['CPUExecutionProvider']
         sess_options = ort.SessionOptions()
-        sess_options.inter_op_num_threads = 4  # Use 4 threads
-        sess_options.intra_op_num_threads = 4
+        sess_options.inter_op_num_threads = 2  # Conservative for system Python
+        sess_options.intra_op_num_threads = 2
         
         self.session = ort.InferenceSession(
             model_path, 
@@ -120,7 +100,6 @@ class ONNXWireDefectDetector:
         detections = []
         
         # ONNX output format: [batch, num_boxes, 6]
-        # where 6 = [x, y, w, h, confidence, class_id]
         if len(output.shape) == 3:
             output = output[0]  # Remove batch dimension
         
@@ -164,7 +143,7 @@ class ONNXWireDefectDetector:
         total = sum(self.detection_counts.values())
         avg_fps = np.mean(self.fps_queue) if self.fps_queue else 0
         
-        print(f"\r[ONNX] FPS: {avg_fps:.1f} | "
+        print(f"\r[SYSTEM] FPS: {avg_fps:.1f} | "
               f"Total: {total} | "
               f"Fail: {self.detection_counts['fail']} | "
               f"Pagan: {self.detection_counts['pagan']} | "
@@ -173,20 +152,19 @@ class ONNXWireDefectDetector:
 
 def main():
     """Main inference loop"""
-    print("=== Wire Defect Detection with ONNX Runtime ===")
-    print("Fallback inference engine for Raspberry Pi")
+    print("=== Wire Defect Detection with System Python ===")
+    print("Using system packages (no virtual environment)")
     print()
     
     # Check for model file
     model_path = 'models/best_cropped.onnx'
     if not os.path.exists(model_path):
         print(f"❌ Model file not found: {model_path}")
-        print("Please ensure the ONNX model is in the models/ directory")
         return 1
     
     # Initialize detector
     try:
-        detector = ONNXWireDefectDetector(
+        detector = SystemONNXDetector(
             model_path=model_path,
             conf_threshold=0.25
         )
@@ -211,7 +189,6 @@ def main():
     
     print()
     print("Starting inference... (Press Ctrl+C to stop)")
-    print("Note: ONNX Runtime is slower than NCNN but more compatible")
     print()
     
     try:
