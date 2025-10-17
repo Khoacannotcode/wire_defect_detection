@@ -107,17 +107,30 @@ class SimpleWireDetector:
                     print(f"Detection {i}: conf={conf:.4f}, class={int(class_id)}, bbox=[{x_center:.1f},{y_center:.1f},{width:.1f},{height:.1f}]")
                 
                 if conf > self.conf_threshold and int(class_id) < len(self.class_names):
-                    # Convert normalized coordinates to pixel coordinates
-                    x1 = int((x_center - width/2) * self.input_size)
-                    y1 = int((y_center - height/2) * self.input_size)
-                    x2 = int((x_center + width/2) * self.input_size)
-                    y2 = int((y_center + height/2) * self.input_size)
+                    # Check if coordinates are normalized (0-1) or absolute pixels
+                    if x_center <= 1.0 and y_center <= 1.0 and width <= 1.0 and height <= 1.0:
+                        # Normalized coordinates - convert to pixels
+                        x1 = int((x_center - width/2) * self.input_size)
+                        y1 = int((y_center - height/2) * self.input_size)
+                        x2 = int((x_center + width/2) * self.input_size)
+                        y2 = int((y_center + height/2) * self.input_size)
+                    else:
+                        # Absolute pixel coordinates - use directly
+                        x1 = int(x_center - width/2)
+                        y1 = int(y_center - height/2)
+                        x2 = int(x_center + width/2)
+                        y2 = int(y_center + height/2)
                     
                     # Ensure bbox is within image bounds
                     x1 = max(0, min(x1, self.input_size))
                     y1 = max(0, min(y1, self.input_size))
                     x2 = max(0, min(x2, self.input_size))
                     y2 = max(0, min(y2, self.input_size))
+                    
+                    # Ensure valid bbox (width and height > 0)
+                    if x2 <= x1 or y2 <= y1:
+                        print(f"⚠️  Invalid bbox: [{x1},{y1},{x2},{y2}] - skipping")
+                        continue
                     
                     detections.append({
                         'class_id': int(class_id),
