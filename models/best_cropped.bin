@@ -1,4 +1,0 @@
-# NCNN Binary Model File
-# This is a placeholder binary file for the NCNN model
-# In production, this would be generated from the ONNX model using onnx2ncnn tool
-# File size: ~6MB (similar to original ONNX model)
