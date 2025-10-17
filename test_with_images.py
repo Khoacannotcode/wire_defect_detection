@@ -145,12 +145,16 @@ class SimpleWireDetector:
             return None, []
         
         original_image = image.copy()
+        print(f"  Original image: {image.shape[1]}x{image.shape[0]}")
         
         # Crop to ROI
         cropped_image = self.crop_to_roi(image)
+        print(f"  Cropped image: {cropped_image.shape[1]}x{cropped_image.shape[0]}")
         
-        # Preprocess
+        # Preprocess (resize to 416x416)
         input_data = self.preprocess(cropped_image)
+        resized_image = cv2.resize(cropped_image, (self.input_size, self.input_size))
+        print(f"  Resized image: {resized_image.shape[1]}x{resized_image.shape[0]}")
         
         # Run inference
         start_time = time.time()
@@ -160,21 +164,33 @@ class SimpleWireDetector:
         # Postprocess
         detections = self.postprocess(outputs[0])
         
-        # Draw results on cropped image
-        result_image = cropped_image.copy()
-        for det in detections:
+        # Draw results on RESIZED image (416x416) to match bbox coordinates
+        result_image = resized_image.copy()
+        print(f"  Drawing on resized image: {result_image.shape[1]}x{result_image.shape[0]}")
+        
+        for i, det in enumerate(detections):
             bbox = det['bbox']
             class_name = det['class_name']
             confidence = det['confidence']
             color = self.colors[class_name]
             
-            # Draw bounding box
-            cv2.rectangle(result_image, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
+            print(f"  Drawing bbox {i+1}: {bbox} on {result_image.shape[1]}x{result_image.shape[0]} image")
             
-            # Draw label
-            label = f"{class_name}: {confidence:.2f}"
-            cv2.putText(result_image, label, (bbox[0], bbox[1]-10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            # Verify bbox is within image bounds
+            if (bbox[0] >= 0 and bbox[1] >= 0 and 
+                bbox[2] <= result_image.shape[1] and bbox[3] <= result_image.shape[0]):
+                
+                # Draw bounding box
+                cv2.rectangle(result_image, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
+                
+                # Draw label
+                label = f"{class_name}: {confidence:.2f}"
+                cv2.putText(result_image, label, (bbox[0], bbox[1]-10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                
+                print(f"    ✅ Drew bbox {i+1}: {bbox} with color {color}")
+            else:
+                print(f"    ❌ Bbox {i+1} out of bounds: {bbox}")
         
         return result_image, detections, inference_time
 
