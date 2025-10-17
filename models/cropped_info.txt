@@ -1,0 +1,31 @@
+YOLOv8 Wire Defect Detection - Cropped Dataset Model
+=======================================================
+
+Model Optimization:
+  Target: Center crop focus (60% width) for better lighting
+  Architecture: YOLOV8N
+  Input size: 416x416
+  Classes: fail (RED), pagan (BLUE), valid (GREEN)
+  Training epochs: 150
+  Classification loss weight: 1.0 (increased)
+
+Cropped Dataset Optimizations:
+  - Center crop to 60% width to focus on well-lit areas
+  - Labels adjusted for cropped region
+  - Reduced edge confusion from lighting variations
+  - Enhanced fail detection in optimal lighting conditions
+  - Maintained full height for complete wire visibility
+Exported Models:
+  PyTorch: models\best_cropped.pt
+  ONNX: models\best_cropped.onnx
+
+Usage for Fail Detection:
+  # Load fail-sensitive model
+  from ultralytics import YOLO
+  model = YOLO('best_fail_sensitive.pt')
+  
+  # Lower confidence threshold for fail detection
+  results = model('image.jpg', conf=0.15)  # Lower threshold
+  
+  # Filter for fail class only
+  fail_detections = [box for box in results[0].boxes if int(box.cls[0]) == 0]
