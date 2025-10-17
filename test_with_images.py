@@ -35,7 +35,7 @@ class SimpleWireDetector:
         # Model settings
         self.input_size = 416
         self.crop_ratio = 0.6
-        self.conf_threshold = 0.25
+        self.conf_threshold = 0.1  # Lower threshold for debugging
         
         # Class info
         self.class_names = ['fail', 'pagan', 'valid']
@@ -73,34 +73,56 @@ class SimpleWireDetector:
         return img
     
     def postprocess(self, output):
-        """Extract detections from model output"""
+        """Extract detections from model output with debugging"""
         detections = []
+        
+        print(f"Raw model output shape: {output.shape}")
         
         # Handle different output formats
         if len(output.shape) == 3:
             output = output[0]  # Remove batch dimension
         
+        print(f"Processed output shape: {output.shape}")
+        
+        # Debug: Check output values
+        if len(output) > 0:
+            print(f"Sample detection: {output[0]}")
+            print(f"Confidence range: {output[:, 4].min():.4f} - {output[:, 4].max():.4f}")
+        
         # Extract detections above confidence threshold
-        for detection in output:
+        for i, detection in enumerate(output):
             if len(detection) >= 6:
                 conf = detection[4]
-                if conf > self.conf_threshold:
-                    class_id = int(detection[5])
-                    if class_id < len(self.class_names):
-                        # Convert normalized coordinates to pixel coordinates
-                        x_center, y_center, width, height = detection[:4]
-                        x1 = int((x_center - width/2) * self.input_size)
-                        y1 = int((y_center - height/2) * self.input_size)
-                        x2 = int((x_center + width/2) * self.input_size)
-                        y2 = int((y_center + height/2) * self.input_size)
-                        
-                        detections.append({
-                            'class_id': class_id,
-                            'class_name': self.class_names[class_id],
-                            'confidence': conf,
-                            'bbox': [x1, y1, x2, y2]
-                        })
+                class_id = int(detection[5])
+                
+                # Debug: Print all detections above very low threshold
+                if conf > 0.01:  # Very low threshold for debugging
+                    print(f"Detection {i}: conf={conf:.4f}, class={class_id}, bbox={detection[:4]}")
+                
+                if conf > self.conf_threshold and class_id < len(self.class_names):
+                    # Convert normalized coordinates to pixel coordinates
+                    x_center, y_center, width, height = detection[:4]
+                    x1 = int((x_center - width/2) * self.input_size)
+                    y1 = int((y_center - height/2) * self.input_size)
+                    x2 = int((x_center + width/2) * self.input_size)
+                    y2 = int((y_center + height/2) * self.input_size)
+                    
+                    # Ensure bbox is within image bounds
+                    x1 = max(0, min(x1, self.input_size))
+                    y1 = max(0, min(y1, self.input_size))
+                    x2 = max(0, min(x2, self.input_size))
+                    y2 = max(0, min(y2, self.input_size))
+                    
+                    detections.append({
+                        'class_id': class_id,
+                        'class_name': self.class_names[class_id],
+                        'confidence': conf,
+                        'bbox': [x1, y1, x2, y2]
+                    })
+                    
+                    print(f"✅ Added detection: {self.class_names[class_id]} conf={conf:.3f} bbox=[{x1},{y1},{x2},{y2}]")
         
+        print(f"Total detections found: {len(detections)}")
         return detections
     
     def detect_image(self, image_path):
