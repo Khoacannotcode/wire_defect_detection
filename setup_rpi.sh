@@ -23,16 +23,37 @@ sudo apt upgrade -y
 
 # Install system dependencies
 echo "[2/7] Installing system dependencies..."
-sudo apt install -y \
-    python3-pip \
-    python3-venv \
-    python3-opencv \
-    libopencv-dev \
-    libatlas-base-dev \
-    libopenblas-dev \
-    libjpeg-dev \
-    cmake \
-    build-essential
+
+# Check OS version and install appropriate packages
+if grep -q "bullseye\|bookworm" /etc/os-release; then
+    echo "Detected modern Raspberry Pi OS (Bullseye/Bookworm)"
+    sudo apt install -y \
+        python3-pip \
+        python3-venv \
+        python3-opencv \
+        libopencv-dev \
+        libopenblas-dev \
+        libjpeg-dev \
+        libpng-dev \
+        libtiff-dev \
+        cmake \
+        build-essential \
+        pkg-config \
+        libhdf5-dev \
+        libhdf5-serial-dev
+else
+    echo "Detected older Raspberry Pi OS"
+    sudo apt install -y \
+        python3-pip \
+        python3-venv \
+        python3-opencv \
+        libopencv-dev \
+        libatlas-base-dev \
+        libopenblas-dev \
+        libjpeg-dev \
+        cmake \
+        build-essential
+fi
 
 # Install camera libraries
 echo "[3/7] Installing camera libraries..."
@@ -53,13 +74,38 @@ pip install -r requirements.txt
 
 # Install NCNN Python binding
 echo "[7/7] Installing NCNN (this may take a few minutes)..."
-# Try pre-built wheel first
+
+# Try multiple installation methods
+echo "Attempting NCNN installation..."
+
+# Method 1: Try pre-built wheel
 if [ -f "ncnn-python-*.whl" ]; then
-    echo "Installing from local wheel file..."
+    echo "Method 1: Installing from local wheel file..."
     pip install ncnn-python-*.whl
+elif pip install ncnn-python --timeout 300 2>/dev/null; then
+    echo "Method 1: Successfully installed ncnn-python from PyPI"
 else
-    echo "Building NCNN from source..."
-    pip install ncnn-python
+    echo "Method 1 failed, trying alternative approaches..."
+    
+    # Method 2: Install with specific flags
+    echo "Method 2: Installing with build flags..."
+    pip install ncnn-python --no-cache-dir --verbose --timeout 600 2>/dev/null || {
+        
+        # Method 3: Build from source with specific settings
+        echo "Method 2 failed, trying Method 3: Build from source..."
+        export CMAKE_ARGS="-DNCNN_VULKAN=OFF -DNCNN_BUILD_EXAMPLES=OFF"
+        pip install ncnn-python --no-binary :all: --timeout 900 2>/dev/null || {
+            
+            # Method 4: Last resort - minimal build
+            echo "Method 3 failed, trying Method 4: Minimal build..."
+            pip install --upgrade pip setuptools wheel
+            pip install ncnn-python --no-deps --force-reinstall 2>/dev/null || {
+                echo "❌ All NCNN installation methods failed!"
+                echo "You may need to install manually or use alternative inference engine."
+                echo "See TROUBLESHOOTING.md for manual installation steps."
+            }
+        }
+    }
 fi
 
 # Enable camera interface

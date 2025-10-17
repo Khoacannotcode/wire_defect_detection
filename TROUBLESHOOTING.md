@@ -4,17 +4,45 @@
 
 ### 1. Installation Issues
 
+#### ❌ `libatlas-base-dev` package not found
+```bash
+# This is common on newer Raspberry Pi OS versions
+
+# Solution 1: Use the dependency fixer
+chmod +x fix_dependencies.sh
+./fix_dependencies.sh
+
+# Solution 2: Install alternative packages
+sudo apt install libopenblas-dev libblas-dev liblapack-dev
+
+# Solution 3: Skip atlas and use OpenBLAS
+sudo apt install libopenblas-base libopenblas-dev
+```
+
 #### ❌ `ncnn-python` installation fails
 ```bash
-# Solution 1: Use pre-built wheel
+# Solution 1: Use pre-built wheel (fastest)
 pip install ncnn-python --no-binary :all:
 
-# Solution 2: Install dependencies first
-sudo apt install cmake build-essential
+# Solution 2: Install build dependencies first
+sudo apt install cmake build-essential python3-dev
 pip install ncnn-python
 
-# Solution 3: Use system package (if available)
+# Solution 3: Build with specific flags
+export CMAKE_ARGS="-DNCNN_VULKAN=OFF -DNCNN_BUILD_EXAMPLES=OFF"
+pip install ncnn-python --no-cache-dir --verbose
+
+# Solution 4: Use system package (if available)
 sudo apt install python3-ncnn
+
+# Solution 5: Manual installation
+git clone https://github.com/Tencent/ncnn.git
+cd ncnn
+mkdir build && cd build
+cmake -DNCNN_PYTHON=ON -DNCNN_VULKAN=OFF ..
+make -j4
+cd ../python
+pip install .
 ```
 
 #### ❌ `picamera2` not found
