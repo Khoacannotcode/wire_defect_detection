@@ -49,8 +49,7 @@ Thumbs.db
 *.weights
 
 # NCNN converted files (will be generated)
-models/*.param
-models/*.bin
+
 
 # Camera test images
 test_*.jpg

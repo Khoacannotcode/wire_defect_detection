@@ -34,9 +34,19 @@ chmod +x setup_rpi.sh
 python convert_to_ncnn.py
 ```
 
-### 5. Run Detection
+### 5. Validate Deployment
 ```bash
 source venv/bin/activate
+python test_deployment.py
+```
+
+### 6. Run Performance Benchmark
+```bash
+python benchmark.py
+```
+
+### 7. Start Real-time Detection
+```bash
 python rpi_inference_ncnn.py
 ```
 
@@ -103,14 +113,23 @@ sudo dphys-swapfile swapon
 ```
 shipping/
 ├── README.md                    # This guide
-├── setup_rpi.sh                # Automated setup
+├── TROUBLESHOOTING.md          # Detailed troubleshooting guide
+├── DEPLOYMENT_CHECKLIST.md     # Step-by-step deployment checklist
+├── setup_rpi.sh                # Automated setup script
 ├── rpi_inference_ncnn.py       # Main inference script
-├── convert_to_ncnn.py          # Model converter
+├── convert_to_ncnn.py          # ONNX to NCNN converter
+├── test_deployment.py          # Deployment validation script
+├── benchmark.py                # Performance benchmark tool
 ├── requirements.txt            # Python dependencies
-└── models/
-    ├── best_cropped.onnx       # ONNX model (intermediate)
-    ├── best_cropped.param      # NCNN model architecture
-    └── best_cropped.bin        # NCNN model weights
+├── models/
+│   ├── best_cropped.onnx       # ONNX model (intermediate)
+│   ├── best_cropped.param      # NCNN model architecture
+│   ├── best_cropped.bin        # NCNN model weights
+│   └── cropped_info.txt        # Model documentation
+└── test_images/                # Sample images for testing
+    ├── 018476.jpg              # Sample fail detection
+    ├── 0bef58.jpg              # Sample multi-class
+    └── ... (50 test images)
 ```
 
 ## 🎯 Why NCNN?
@@ -122,13 +141,24 @@ NCNN (Tencent) is optimized for mobile/edge devices:
 - ✅ No GPU required
 - ✅ 2-4x faster than ONNX Runtime on ARM
 
-## 📞 Support
+## 📞 Support & Documentation
 
-For issues:
-1. Check camera: `libcamera-hello`
-2. Check imports: `python -c "import ncnn; print('OK')"`
-3. Check model files: `ls -lh models/`
-4. Monitor temperature: `vcgencmd measure_temp`
+### Quick Diagnostics
+1. **Run validation**: `python test_deployment.py`
+2. **Check performance**: `python benchmark.py --runs 10`
+3. **Test camera**: `libcamera-hello --timeout 5000`
+4. **Monitor system**: `vcgencmd measure_temp && free -h`
+
+### Detailed Guides
+- **TROUBLESHOOTING.md** - Complete troubleshooting guide
+- **DEPLOYMENT_CHECKLIST.md** - Step-by-step deployment checklist
+- **README.md** - This overview guide
+
+### Performance Expectations
+- **Raspberry Pi 3B**: 3-6 FPS, 200-400ms per frame
+- **Raspberry Pi 4**: 6-12 FPS, 100-250ms per frame
+- **Memory usage**: ~150MB
+- **Model size**: ~6MB total
 
 ---
 **Package Version**: 1.0  
