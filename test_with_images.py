@@ -7,12 +7,20 @@ Test the inference pipeline with static images before using camera
 import cv2
 import numpy as np
 import sys
-import os
 import time
 from pathlib import Path
 
-# Add system packages to path for compatibility
-sys.path.insert(0, '/usr/lib/python3/dist-packages')
+ROOT_DIR = Path(__file__).resolve().parent
+MODELS_DIR = ROOT_DIR / "models"
+TEST_IMAGES_DIR = ROOT_DIR / "test_images"
+TEST_RESULTS_DIR = ROOT_DIR / "test_results"
+
+# Add system packages to path for compatibility on Linux
+LINUX_SITE_PACKAGES = Path("/usr/lib/python3/dist-packages")
+if LINUX_SITE_PACKAGES.exists():
+    linux_site_packages_str = str(LINUX_SITE_PACKAGES)
+    if linux_site_packages_str not in sys.path:
+        sys.path.insert(0, linux_site_packages_str)
 
 try:
     import onnxruntime as ort
@@ -27,11 +35,12 @@ class SimpleWireDetector:
     """Simple wire defect detector for testing"""
     
     def __init__(self, model_path):
-        print(f"Loading model: {model_path}")
+        self.model_path = Path(model_path)
+        print(f"Loading model: {self.model_path}")
         
         # Create ONNX Runtime session
         providers = ['CPUExecutionProvider']
-        self.session = ort.InferenceSession(model_path, providers=providers)
+        self.session = ort.InferenceSession(str(self.model_path), providers=providers)
         self.input_name = self.session.get_inputs()[0].name
         
         # Model settings
@@ -344,8 +353,8 @@ def test_images():
     print("=" * 60)
     
     # Check model file
-    model_path = "models/best_cropped.onnx"
-    if not os.path.exists(model_path):
+    model_path = MODELS_DIR / "best_cropped.onnx"
+    if not model_path.exists():
         print(f"[ERROR] Model file not found: {model_path}")
         print("Please ensure the ONNX model is in the models/ directory")
         return 1
@@ -358,15 +367,14 @@ def test_images():
         return 1
     
     # Get test images
-    test_dir = Path("test_images")
-    if not test_dir.exists():
-        print(f"[ERROR] Test images directory not found: {test_dir}")
+    if not TEST_IMAGES_DIR.exists():
+        print(f"[ERROR] Test images directory not found: {TEST_IMAGES_DIR}")
         return 1
     
-    image_files = list(test_dir.glob("*.jpg"))[:10]  # Test first 10 images
+    image_files = sorted(TEST_IMAGES_DIR.glob("*.jpg"))[:10]  # Test first 10 images
     
     if not image_files:
-        print(f"[ERROR] No test images found in {test_dir}")
+        print(f"[ERROR] No test images found in {TEST_IMAGES_DIR}")
         return 1
     
     print(f"[INFO] Found {len(image_files)} test images")
@@ -376,6 +384,7 @@ def test_images():
     total_detections = 0
     total_time = 0
     class_counts = {'fail': 0, 'pagan': 0, 'valid': 0}
+    TEST_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     
     for i, image_path in enumerate(image_files, 1):
         print(f"[{i}/{len(image_files)}] Testing: {image_path.name}")
@@ -400,8 +409,8 @@ def test_images():
                     print(f"    - {det['class_name']}: {det['confidence']:.3f}")
                 
                 # Save result (optional)
-                output_path = f"test_results_{image_path.name}"
-                cv2.imwrite(output_path, result_image)
+                output_path = TEST_RESULTS_DIR / f"test_results_{image_path.name}"
+                cv2.imwrite(str(output_path), result_image)
                 print(f"  [SAVE] Result saved: {output_path}")
                 
             else:
