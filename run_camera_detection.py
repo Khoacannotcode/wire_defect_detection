@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
 Wire Defect Detection - Live Camera Detection
-Simple real-time detection using Raspberry Pi camera
+Jetson Nano friendly real-time detection using OpenCV capture
 """
 
+import argparse
 import cv2
 import numpy as np
 import sys
 import os
 import time
+import platform
 from collections import deque
+from pathlib import Path
 
 # Add system packages to path for compatibility
 sys.path.insert(0, '/usr/lib/python3/dist-packages')
@@ -23,90 +26,151 @@ except ImportError:
     print("Install with: pip install onnxruntime")
     sys.exit(1)
 
-try:
-    from picamera2 import Picamera2
-    print("✅ Picamera2 loaded")
-except ImportError:
-    print("❌ Picamera2 not found")
-    print("Install with: sudo apt install python3-picamera2")
-    sys.exit(1)
+# Determine workspace paths
+ROOT_DIR = Path(__file__).resolve().parent
+MODELS_DIR = ROOT_DIR / "models"
 
 class LiveWireDetector:
-    """Simple live wire defect detector"""
-    
+    """Live wire defect detector optimized for Jetson Nano."""
+
     def __init__(self, model_path):
-        print(f"Loading model: {model_path}")
-        
-        # Create ONNX session
-        providers = ['CPUExecutionProvider']
+        self.model_path = str(model_path)
+        print(f"Loading model: {self.model_path}")
+
         sess_options = ort.SessionOptions()
-        sess_options.inter_op_num_threads = 2
-        sess_options.intra_op_num_threads = 2
-        
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess_options.enable_mem_pattern = False
+
+        is_aarch64 = platform.machine().lower() in ("aarch64", "armv8", "armv8l")
+        cpu_threads = max(1, min(2, os.cpu_count() or 1))
+
+        if is_aarch64:
+            sess_options.intra_op_num_threads = 1
+            sess_options.inter_op_num_threads = 1
+        else:
+            sess_options.intra_op_num_threads = cpu_threads
+            sess_options.inter_op_num_threads = 1
+
+        available_providers = ort.get_available_providers()
+        providers = []
+
+        if 'CUDAExecutionProvider' in available_providers:
+            os.environ.setdefault('CUDA_MODULE_LOADING', 'LAZY')
+            providers.append('CUDAExecutionProvider')
+            print("[INFO] Using CUDAExecutionProvider")
+        else:
+            print("[INFO] CUDAExecutionProvider not available, using CPU only")
+
+        providers.append('CPUExecutionProvider')
+
         self.session = ort.InferenceSession(
-            model_path, 
-            providers=providers,
-            sess_options=sess_options
+            self.model_path,
+            sess_options=sess_options,
+            providers=providers
         )
-        
+
+        self.input_name = self.session.get_inputs()[0].name
+        self.using_cuda = 'CUDAExecutionProvider' in self.session.get_providers()
+        self.is_aarch64 = is_aarch64
+
         # Settings
         self.input_size = 416
         self.crop_ratio = 0.6
-        self.conf_threshold = 0.25  # Standard threshold for optimized ONNX model
-        
-        # Class info
+        self.conf_threshold = 0.22
+
+        # Class info / colors
         self.class_names = ['fail', 'pagan', 'valid']
-        
+        self.colors = {
+            'fail': (0, 0, 255),
+            'pagan': (255, 0, 0),
+            'valid': (0, 255, 0)
+        }
+
         # Statistics
         self.detection_counts = {'fail': 0, 'pagan': 0, 'valid': 0}
-        self.fps_history = deque(maxlen=30)
-        
+        self.fps_history = deque(maxlen=60)
+
         print("✅ Detector ready")
     
     def crop_to_roi(self, frame):
-        """Crop frame to center ROI"""
+        """Crop frame to the central region used during training."""
         h, w = frame.shape[:2]
         crop_width = int(w * self.crop_ratio)
         start_x = (w - crop_width) // 2
         end_x = start_x + crop_width
         return frame[:, start_x:end_x], start_x
-    
-    def scale_bbox_to_original(self, bbox, cropped_shape, original_shape, crop_start_x):
-        """
-        Scale bbox from 416x416 model output to original image coordinates
-        
-        Args:
-            bbox: [x1, y1, x2, y2] in 416x416 space
-            cropped_shape: (height, width) of cropped image
-            original_shape: (height, width) of original image  
-            crop_start_x: x offset where crop started in original image
-        
-        Returns:
-            scaled_bbox: [x1, y1, x2, y2] in original image coordinates
-        """
-        # Scale factors from 416x416 to cropped image size
-        scale_x = cropped_shape[1] / self.input_size  # width scale
-        scale_y = cropped_shape[0] / self.input_size  # height scale
-        
-        # Scale bbox from 416x416 to cropped image size
-        scaled_bbox = [
-            bbox[0] * scale_x,  # x1
-            bbox[1] * scale_y,  # y1  
-            bbox[2] * scale_x,  # x2
-            bbox[3] * scale_y   # y2
-        ]
-        
-        # Adjust x coordinates from cropped space to original image space
-        scaled_bbox[0] += crop_start_x  # x1
-        scaled_bbox[2] += crop_start_x  # x2
-        
-        # Ensure coordinates are within original image bounds
-        scaled_bbox[0] = max(0, min(scaled_bbox[0], original_shape[1]))
-        scaled_bbox[1] = max(0, min(scaled_bbox[1], original_shape[0]))
-        scaled_bbox[2] = max(0, min(scaled_bbox[2], original_shape[1]))
-        scaled_bbox[3] = max(0, min(scaled_bbox[3], original_shape[0]))
-        
-        return [int(coord) for coord in scaled_bbox]
+
+    def letterbox(self, image, new_shape=416, color=(114, 114, 114)):
+        shape = image.shape[:2]
+
+        if isinstance(new_shape, int):
+            new_shape = (new_shape, new_shape)
+
+        r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+        new_unpad = (int(round(shape[1] * r)), int(round(shape[0] * r)))
+
+        dw = new_shape[1] - new_unpad[0]
+        dh = new_shape[0] - new_unpad[1]
+        dw /= 2
+        dh /= 2
+
+        if shape[::-1] != new_unpad:
+            image = cv2.resize(image, new_unpad, interpolation=cv2.INTER_LINEAR)
+
+        top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+        left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+
+        image = cv2.copyMakeBorder(
+            image,
+            top,
+            bottom,
+            left,
+            right,
+            cv2.BORDER_CONSTANT,
+            value=color
+        )
+
+        return image, r, (dw, dh)
+
+    def scale_bbox_from_letterbox(self, bbox, ratio, dwdh, cropped_shape):
+        dw, dh = dwdh
+        x1, y1, x2, y2 = [float(x) for x in bbox]
+
+        x1 = (x1 - dw) / ratio
+        y1 = (y1 - dh) / ratio
+        x2 = (x2 - dw) / ratio
+        y2 = (y2 - dh) / ratio
+
+        width = cropped_shape[1]
+        height = cropped_shape[0]
+        x1 = max(0.0, min(x1, width))
+        y1 = max(0.0, min(y1, height))
+        x2 = max(0.0, min(x2, width))
+        y2 = max(0.0, min(y2, height))
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        return [x1, y1, x2, y2]
+
+    def shift_bbox_to_original(self, bbox, original_shape, crop_start_x):
+        x1, y1, x2, y2 = bbox
+
+        x1 += crop_start_x
+        x2 += crop_start_x
+
+        width = original_shape[1]
+        height = original_shape[0]
+        x1 = max(0, min(int(round(x1)), width))
+        y1 = max(0, min(int(round(y1)), height))
+        x2 = max(0, min(int(round(x2)), width))
+        y2 = max(0, min(int(round(y2)), height))
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        return [x1, y1, x2, y2]
     
     def nms(self, detections, iou_threshold=0.5):
         """Apply Non-Maximum Suppression to remove overlapping detections"""
@@ -125,7 +189,7 @@ class LiveWireDetector:
             # Remove detections with high IoU overlap with the best detection
             remaining = []
             for det in detections:
-                iou = self.calculate_iou(best['bbox_416'], det['bbox_416'])
+                iou = self.calculate_iou(best['bbox'], det['bbox'])
                 if iou < iou_threshold:
                     remaining.append(det)
             detections = remaining
@@ -164,15 +228,7 @@ class LiveWireDetector:
             class_name = detection['class_name']
             confidence = detection['confidence']
             
-            # Get color based on class
-            if class_name == 'fail':
-                color = (0, 0, 255)    # Red
-            elif class_name == 'pagan':
-                color = (255, 0, 0)    # Blue
-            elif class_name == 'valid':
-                color = (0, 255, 0)    # Green
-            else:
-                color = (128, 128, 128)  # Gray
+            color = self.colors.get(class_name, (128, 128, 128))
             
             # Draw bounding box
             cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
@@ -192,21 +248,15 @@ class LiveWireDetector:
         return frame
     
     def preprocess(self, frame):
-        """Prepare frame for inference"""
-        # Resize
-        img = cv2.resize(frame, (self.input_size, self.input_size))
-        
-        # Convert BGR to RGB
+        img, ratio, dwdh = self.letterbox(frame, new_shape=self.input_size)
+
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        
-        # Normalize
         img = img.astype(np.float32) / 255.0
-        
-        # Format for ONNX (NCHW)
         img = np.transpose(img, (2, 0, 1))
         img = np.expand_dims(img, axis=0)
-        
-        return img
+        img = np.ascontiguousarray(img)
+
+        return img, ratio, dwdh
     
     def detect_frame(self, frame):
         """Detect defects in a frame and return annotated frame"""
@@ -216,79 +266,74 @@ class LiveWireDetector:
         cropped_frame, crop_start_x = self.crop_to_roi(frame)
         
         # Preprocess
-        input_data = self.preprocess(cropped_frame)
-        
+        input_data, ratio, dwdh = self.preprocess(cropped_frame)
+ 
         # Run inference
         start_time = time.time()
-        outputs = self.session.run(None, {'images': input_data})
+        outputs = self.session.run(None, {self.input_name: input_data})
         inference_time = time.time() - start_time
-        
-        # Extract detections
-        detections = []
-        output = outputs[0]
-        
-        # YOLO output format: (1, 7, num_detections)
-        if len(output.shape) == 3:
-            output = output[0]  # Remove batch dimension: (7, num_detections)
-        
-        # Transpose to get (num_detections, 7)
-        output = output.T  # Shape: (num_detections, 7)
-        
-        # Extract raw detections
-        raw_detections = []
-        for detection in output:
-            if len(detection) >= 6:
-                x_center, y_center, width, height, conf, class_id = detection[:6]
-                if conf > self.conf_threshold and int(class_id) < len(self.class_names):
-                    # Convert center+size format to x1,y1,x2,y2 format (in 416x416 space)
-                    x1 = int(x_center - width/2)
-                    y1 = int(y_center - height/2)
-                    x2 = int(x_center + width/2)
-                    y2 = int(y_center + height/2)
-                    
-                    # Ensure bbox is within 416x416 bounds
-                    x1 = max(0, min(x1, self.input_size))
-                    y1 = max(0, min(y1, self.input_size))
-                    x2 = max(0, min(x2, self.input_size))
-                    y2 = max(0, min(y2, self.input_size))
-                    
-                    # Skip invalid bboxes
-                    if x2 <= x1 or y2 <= y1:
-                        continue
-                    
-                    raw_detections.append({
-                        'bbox_416': [x1, y1, x2, y2],
-                        'class_id': int(class_id),
-                        'class_name': self.class_names[int(class_id)],
-                        'confidence': conf
-                    })
-        
-        # Apply NMS on 416x416 space
-        nms_detections = self.nms(raw_detections, iou_threshold=0.5)
-        
-        # Scale final detections to original coordinates
-        for det in nms_detections:
-            bbox_416 = det['bbox_416']
-            
-            # Scale to original image coordinates
-            scaled_bbox = self.scale_bbox_to_original(
-                bbox_416,
-                cropped_frame.shape,  # cropped shape (h, w)
-                original_frame.shape,  # original shape (h, w)
+ 
+        detections = self.postprocess(outputs[0], ratio, dwdh, cropped_frame.shape)
+
+        scaled_detections = []
+        for det in detections:
+            scaled_bbox = self.shift_bbox_to_original(
+                det['bbox'],
+                original_frame.shape,
                 crop_start_x
             )
-            
-            detections.append({
+
+            if scaled_bbox is None:
+                continue
+
+            scaled_detections.append({
                 'bbox': scaled_bbox,
                 'class_id': det['class_id'],
                 'class_name': det['class_name'],
                 'confidence': det['confidence']
             })
-        
-        # Draw detections on original frame
-        annotated_frame = self.draw_detections(original_frame, detections)
-        
-        return annotated_frame, detections, inference_time
+
+        annotated_frame = self.draw_detections(original_frame, scaled_detections)
+
+        return annotated_frame, scaled_detections, inference_time
+
+    def postprocess(self, output, ratio, dwdh, cropped_shape):
+        if output.ndim == 3:
+            output = output[0]
+
+        raw_detections = []
+
+        for det in output:
+            if len(det) < 6:
+                continue
+
+            x1, y1, x2, y2, conf, class_id = det[:6]
+
+            if conf < self.conf_threshold:
+                continue
+
+            class_id = int(class_id)
+            if class_id >= len(self.class_names):
+                continue
+
+            bbox_cropped = self.scale_bbox_from_letterbox(
+                [x1, y1, x2, y2],
+                ratio,
+                dwdh,
+                cropped_shape
+            )
+
+            if bbox_cropped is None:
+                continue
+
+            raw_detections.append({
+                'class_id': class_id,
+                'class_name': self.class_names[class_id],
+                'confidence': float(conf),
+                'bbox': bbox_cropped
+            })
+
+        return self.nms(raw_detections, iou_threshold=0.5)
     
     def update_stats(self, detections, inference_time):
         """Update detection statistics"""
@@ -313,122 +358,167 @@ class LiveWireDetector:
               f"Valid: {self.detection_counts['valid']:3d}", 
               end='', flush=True)
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Wire defect detection on Jetson Nano")
+    parser.add_argument(
+        "--model",
+        default=str(MODELS_DIR / "best_cropped.onnx"),
+        help="Path to ONNX model (default: models/best_cropped.onnx)",
+    )
+    parser.add_argument(
+        "--source",
+        default="0",
+        help="Camera index, video path, or GStreamer pipeline (default: 0)",
+    )
+    parser.add_argument("--width", type=int, default=1280, help="Capture width for USB/CSI cameras")
+    parser.add_argument("--height", type=int, default=720, help="Capture height for USB/CSI cameras")
+    parser.add_argument("--fps", type=int, default=30, help="Capture FPS for USB/CSI cameras")
+    parser.add_argument("--warmup", type=int, default=5, help="Number of warmup frames to skip")
+    parser.add_argument(
+        "--use-gstreamer",
+        action="store_true",
+        help="Open the source with the GStreamer backend (required for CSI pipeline strings)",
+    )
+    parser.add_argument(
+        "--display",
+        action="store_true",
+        help="Show annotated frames with cv2.imshow (press q to quit)",
+    )
+
+    return parser.parse_args()
+
+
+def open_capture(source, width, height, fps, use_gstreamer=False):
+    """Create a cv2.VideoCapture for USB/CSI cameras or files."""
+
+    def _is_int(value: str) -> bool:
+        try:
+            int(value)
+            return True
+        except ValueError:
+            return False
+
+    backend = cv2.CAP_GSTREAMER if use_gstreamer else cv2.CAP_ANY
+
+    if _is_int(source):
+        device_index = int(source)
+        backend = cv2.CAP_GSTREAMER if use_gstreamer else cv2.CAP_V4L2
+        cap = cv2.VideoCapture(device_index, backend)
+    else:
+        if use_gstreamer:
+            backend = cv2.CAP_GSTREAMER
+            cap = cv2.VideoCapture(source, backend)
+        else:
+            cap = cv2.VideoCapture(source)
+
+    if not cap.isOpened():
+        raise RuntimeError(f"Unable to open video source: {source}")
+
+    # Configure capture properties when possible (GStreamer pipelines manage these internally)
+    if not use_gstreamer and cap.get(cv2.CAP_PROP_FRAME_WIDTH) > 0:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        if fps > 0:
+            cap.set(cv2.CAP_PROP_FPS, fps)
+
+    return cap
+
 def main():
-    """Main detection loop"""
+    args = parse_args()
+
     print("=" * 60)
-    print("📹 Wire Defect Detection - Live Camera")
+    print("📹 Wire Defect Detection - Jetson Nano")
     print("=" * 60)
     print()
-    
-    # Check model
-    model_path = "models/best_cropped.onnx"
-    if not os.path.exists(model_path):
+
+    model_path = Path(args.model)
+    if not model_path.exists():
         print(f"❌ Model not found: {model_path}")
-        print("Please ensure the ONNX model is available")
         return 1
-    
-    # Initialize detector
+
     try:
         detector = LiveWireDetector(model_path)
-    except Exception as e:
-        print(f"❌ Failed to initialize detector: {e}")
+    except Exception as exc:
+        print(f"❌ Failed to initialize detector: {exc}")
         return 1
-    
-    # Initialize camera
-    print("Initializing camera...")
+
     try:
-        picam2 = Picamera2()
-        
-        # Configure camera
-        config = picam2.create_preview_configuration(
-            main={"size": (1280, 720)},
-            buffer_count=2
-        )
-        picam2.configure(config)
-        picam2.start()
-        
-        print("✅ Camera initialized")
-        
-        # Wait for camera to stabilize
-        time.sleep(2)
-        
-    except Exception as e:
-        print(f"❌ Camera initialization failed: {e}")
-        print()
-        print("Troubleshooting:")
-        print("  1. Check camera connection")
-        print("  2. Enable camera: sudo raspi-config nonint do_camera 0")
-        print("  3. Test camera: libcamera-hello --timeout 5000")
+        capture = open_capture(args.source, args.width, args.height, args.fps, args.use_gstreamer)
+    except RuntimeError as exc:
+        print(f"❌ {exc}")
         return 1
-    
+
+    warmup_frames = max(0, args.warmup)
+    total_frames = 0
+    processed_frames = 0
+
+    backend_name = "GStreamer" if args.use_gstreamer else "OpenCV"
+    print(f"[INFO] Source: {args.source}")
+    print(f"[INFO] Backend: {backend_name}")
+    if not args.use_gstreamer:
+        print(f"[INFO] Requested size: {args.width}x{args.height}@{args.fps}fps")
+    print("[INFO] Warmup frames:", warmup_frames)
     print()
-    print("🎬 Starting live detection...")
-    print("Press Ctrl+C to stop")
-    print()
-    
-    # Main detection loop
+    print("🎬 Starting live detection (press Ctrl+C or 'q' to stop)...")
+
     try:
-        frame_count = 0
-        
         while True:
-            # Capture frame
-            frame = picam2.capture_array()
-            
-            # Convert RGBA to BGR if needed
-            if len(frame.shape) == 3 and frame.shape[2] == 4:
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
-            
-            # Detect defects
+            ret, frame = capture.read()
+            if not ret:
+                print("\n[WARN] Failed to read frame - stopping")
+                break
+
             annotated_frame, detections, inference_time = detector.detect_frame(frame)
-            
-            # Update statistics
-            detector.update_stats(detections, inference_time)
-            
-            # Print stats every 10 frames
-            frame_count += 1
-            if frame_count % 10 == 0:
-                detector.print_stats(frame_count)
-            
-            # Small delay to prevent overwhelming the system
-            time.sleep(0.01)
-            
+
+            total_frames += 1
+
+            if total_frames > warmup_frames:
+                detector.update_stats(detections, inference_time)
+                processed_frames += 1
+
+                if processed_frames % 10 == 0:
+                    detector.print_stats(processed_frames)
+            elif total_frames == warmup_frames:
+                print("[INFO] Warmup complete - collecting statistics")
+
+            if args.display:
+                cv2.imshow("Wire Defect Detection", annotated_frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    print("\n[INFO] 'q' pressed - exiting")
+                    break
+
     except KeyboardInterrupt:
         print("\n\n🛑 Detection stopped by user")
-        
-    except Exception as e:
-        print(f"\n❌ Error during detection: {e}")
+    except Exception as exc:
+        print(f"\n❌ Error during detection: {exc}")
         return 1
-        
     finally:
-        # Cleanup
-        try:
-            picam2.stop()
-            print("📷 Camera stopped")
-        except:
-            pass
-    
-    # Final statistics
+        capture.release()
+        if args.display:
+            cv2.destroyAllWindows()
+
     print()
     print("=" * 60)
     print("📊 FINAL STATISTICS")
     print("=" * 60)
-    
+
     total_detections = sum(detector.detection_counts.values())
     avg_fps = np.mean(detector.fps_history) if detector.fps_history else 0
-    
-    print(f"Frames processed: {frame_count}")
+
+    print(f"Frames captured: {total_frames}")
+    print(f"Frames analysed: {processed_frames}")
     print(f"Total detections: {total_detections}")
     print(f"Average FPS: {avg_fps:.1f}")
     print()
-    
+
     print("Detection breakdown:")
     for class_name, count in detector.detection_counts.items():
         percentage = (count / total_detections * 100) if total_detections > 0 else 0
         print(f"  {class_name}: {count} ({percentage:.1f}%)")
-    
+
     print()
     print("🎉 Detection session complete!")
-    
+
     return 0
 
 if __name__ == "__main__":

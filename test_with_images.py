@@ -7,7 +7,9 @@ Test the inference pipeline with static images before using camera
 import cv2
 import numpy as np
 import sys
+import os
 import time
+import platform
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -35,13 +37,44 @@ class SimpleWireDetector:
     """Simple wire defect detector for testing"""
     
     def __init__(self, model_path):
-        self.model_path = Path(model_path)
-        print(f"Loading model: {self.model_path}")
+        print(f"Loading model: {model_path}")
         
-        # Create ONNX Runtime session
-        providers = ['CPUExecutionProvider']
-        self.session = ort.InferenceSession(str(self.model_path), providers=providers)
+        # Create ONNX Runtime session tailored for Jetson/desktop
+        sess_options = ort.SessionOptions()
+        sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        sess_options.enable_mem_pattern = False
+
+        is_aarch64 = platform.machine().lower() in ("aarch64", "armv8", "armv8l")
+        cpu_threads = max(1, min(2, os.cpu_count() or 1))
+
+        if is_aarch64:
+            sess_options.intra_op_num_threads = 1
+            sess_options.inter_op_num_threads = 1
+        else:
+            sess_options.intra_op_num_threads = cpu_threads
+            sess_options.inter_op_num_threads = 1
+
+        available_providers = ort.get_available_providers()
+        providers = []
+
+        if 'CUDAExecutionProvider' in available_providers:
+            os.environ.setdefault('CUDA_MODULE_LOADING', 'LAZY')
+            providers.append('CUDAExecutionProvider')
+            print("[INFO] Using CUDAExecutionProvider")
+        else:
+            print("[INFO] CUDAExecutionProvider not available, using CPU only")
+
+        providers.append('CPUExecutionProvider')
+
+        self.session = ort.InferenceSession(
+            model_path,
+            sess_options=sess_options,
+            providers=providers
+        )
         self.input_name = self.session.get_inputs()[0].name
+        self.using_cuda = 'CUDAExecutionProvider' in self.session.get_providers()
+        self.is_aarch64 = is_aarch64
         
         # Model settings
         self.input_size = 416
