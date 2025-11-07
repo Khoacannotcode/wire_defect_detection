@@ -2,6 +2,26 @@
 
 set -e
 
+cleanup_disk() {
+    echo "=============================================="
+    echo "[CLEANUP] Freeing disk space..."
+    echo "=============================================="
+
+    sudo apt-get clean
+    sudo rm -rf /var/cache/apt/archives/* /var/cache/apt/archives/partial/*
+    pip cache purge || true
+    rm -rf ~/.cache/pip 2>/dev/null || true
+
+    if [[ -z "$TMPDIR" ]]; then
+        export TMPDIR="$PWD/tmp"
+        mkdir -p "$TMPDIR"
+    fi
+
+    echo "✅ Cleanup complete"
+    df -h
+    echo ""
+}
+
 JETSON_INFO=""
 if [[ -f /etc/nv_tegra_release ]]; then
     JETSON_INFO=$(head -n 1 /etc/nv_tegra_release 2>/dev/null)
@@ -36,7 +56,7 @@ print_section() {
 
 print_section "1/4" "Installing system dependencies..."
 
-sudo apt update
+sudo apt update || cleanup_disk
 sudo apt install -y \
     python3 \
     python3-venv \
@@ -75,16 +95,26 @@ echo "✅ Virtual environment ready (shipping/venv)"
 # Step 3: Python packages
 print_section "3/4" "Installing Python packages..."
 
+cleanup_disk
+
 if [[ -f requirements_simple.txt ]]; then
-    pip install -r requirements_simple.txt
+    pip install --no-cache-dir -r requirements_simple.txt
 else
-    pip install numpy opencv-python-headless pillow tqdm
+    pip install --no-cache-dir numpy pillow tqdm
 fi
 
-if ! pip install onnxruntime-gpu; then
-    echo "⚠️  onnxruntime-gpu install failed, falling back to CPU build"
-    pip install onnxruntime
+if [[ -z "$SKIP_PIP_OPENCV" ]]; then
+    pip install --no-cache-dir opencv-python-headless || echo "⚠️  opencv-python-headless install skipped (using system OpenCV)"
+else
+    echo "[INFO] SKIP_PIP_OPENCV=1, skipping opencv wheel"
 fi
+
+if ! pip install --no-cache-dir onnxruntime-gpu; then
+    echo "⚠️  onnxruntime-gpu install failed, falling back to CPU build"
+    pip install --no-cache-dir onnxruntime
+fi
+
+cleanup_disk
 
 echo "✅ Python packages installed"
 
