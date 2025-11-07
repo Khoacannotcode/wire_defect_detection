@@ -52,7 +52,7 @@ class LiveWireDetector:
         # Settings
         self.input_size = 416
         self.crop_ratio = 0.6
-        self.conf_threshold = 0.25
+        self.conf_threshold = 0.25  # Standard threshold for optimized ONNX model
         
         # Class info
         self.class_names = ['fail', 'pagan', 'valid']
@@ -69,7 +69,127 @@ class LiveWireDetector:
         crop_width = int(w * self.crop_ratio)
         start_x = (w - crop_width) // 2
         end_x = start_x + crop_width
-        return frame[:, start_x:end_x]
+        return frame[:, start_x:end_x], start_x
+    
+    def scale_bbox_to_original(self, bbox, cropped_shape, original_shape, crop_start_x):
+        """
+        Scale bbox from 416x416 model output to original image coordinates
+        
+        Args:
+            bbox: [x1, y1, x2, y2] in 416x416 space
+            cropped_shape: (height, width) of cropped image
+            original_shape: (height, width) of original image  
+            crop_start_x: x offset where crop started in original image
+        
+        Returns:
+            scaled_bbox: [x1, y1, x2, y2] in original image coordinates
+        """
+        # Scale factors from 416x416 to cropped image size
+        scale_x = cropped_shape[1] / self.input_size  # width scale
+        scale_y = cropped_shape[0] / self.input_size  # height scale
+        
+        # Scale bbox from 416x416 to cropped image size
+        scaled_bbox = [
+            bbox[0] * scale_x,  # x1
+            bbox[1] * scale_y,  # y1  
+            bbox[2] * scale_x,  # x2
+            bbox[3] * scale_y   # y2
+        ]
+        
+        # Adjust x coordinates from cropped space to original image space
+        scaled_bbox[0] += crop_start_x  # x1
+        scaled_bbox[2] += crop_start_x  # x2
+        
+        # Ensure coordinates are within original image bounds
+        scaled_bbox[0] = max(0, min(scaled_bbox[0], original_shape[1]))
+        scaled_bbox[1] = max(0, min(scaled_bbox[1], original_shape[0]))
+        scaled_bbox[2] = max(0, min(scaled_bbox[2], original_shape[1]))
+        scaled_bbox[3] = max(0, min(scaled_bbox[3], original_shape[0]))
+        
+        return [int(coord) for coord in scaled_bbox]
+    
+    def nms(self, detections, iou_threshold=0.5):
+        """Apply Non-Maximum Suppression to remove overlapping detections"""
+        if len(detections) == 0:
+            return []
+        
+        # Sort detections by confidence (descending)
+        detections = sorted(detections, key=lambda x: x['confidence'], reverse=True)
+        
+        keep = []
+        while detections:
+            # Keep the detection with highest confidence
+            best = detections.pop(0)
+            keep.append(best)
+            
+            # Remove detections with high IoU overlap with the best detection
+            remaining = []
+            for det in detections:
+                iou = self.calculate_iou(best['bbox_416'], det['bbox_416'])
+                if iou < iou_threshold:
+                    remaining.append(det)
+            detections = remaining
+        
+        return keep
+    
+    def calculate_iou(self, box1, box2):
+        """Calculate Intersection over Union (IoU) of two bounding boxes"""
+        # box format: [x1, y1, x2, y2]
+        x1_inter = max(box1[0], box2[0])
+        y1_inter = max(box1[1], box2[1])
+        x2_inter = min(box1[2], box2[2])
+        y2_inter = min(box1[3], box2[3])
+        
+        # Calculate intersection area
+        if x2_inter <= x1_inter or y2_inter <= y1_inter:
+            return 0.0
+        
+        intersection = (x2_inter - x1_inter) * (y2_inter - y1_inter)
+        
+        # Calculate areas of both boxes
+        area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        
+        # Calculate union area
+        union = area1 + area2 - intersection
+        
+        # Calculate IoU
+        iou = intersection / union if union > 0 else 0.0
+        return iou
+
+    def draw_detections(self, frame, detections):
+        """Draw bounding boxes and labels on frame"""
+        for detection in detections:
+            bbox = detection['bbox']
+            class_name = detection['class_name']
+            confidence = detection['confidence']
+            
+            # Get color based on class
+            if class_name == 'fail':
+                color = (0, 0, 255)    # Red
+            elif class_name == 'pagan':
+                color = (255, 0, 0)    # Blue
+            elif class_name == 'valid':
+                color = (0, 255, 0)    # Green
+            else:
+                color = (128, 128, 128)  # Gray
+            
+            # Draw bounding box
+            cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
+            
+            # Draw label
+            label = f"{class_name}: {confidence:.2f}"
+            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+            
+            # Background for label
+            cv2.rectangle(frame, (bbox[0], bbox[1] - label_size[1] - 10), 
+                         (bbox[0] + label_size[0], bbox[1]), color, -1)
+            
+            # Label text
+            cv2.putText(frame, label, (bbox[0], bbox[1] - 5), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        
+        return frame
     
     def preprocess(self, frame):
         """Prepare frame for inference"""
@@ -89,9 +209,11 @@ class LiveWireDetector:
         return img
     
     def detect_frame(self, frame):
-        """Detect defects in a frame"""
+        """Detect defects in a frame and return annotated frame"""
+        original_frame = frame.copy()
+        
         # Crop to ROI
-        cropped_frame = self.crop_to_roi(frame)
+        cropped_frame, crop_start_x = self.crop_to_roi(frame)
         
         # Preprocess
         input_data = self.preprocess(cropped_frame)
@@ -112,17 +234,61 @@ class LiveWireDetector:
         # Transpose to get (num_detections, 7)
         output = output.T  # Shape: (num_detections, 7)
         
+        # Extract raw detections
+        raw_detections = []
         for detection in output:
             if len(detection) >= 6:
                 x_center, y_center, width, height, conf, class_id = detection[:6]
                 if conf > self.conf_threshold and int(class_id) < len(self.class_names):
-                    detections.append({
+                    # Convert center+size format to x1,y1,x2,y2 format (in 416x416 space)
+                    x1 = int(x_center - width/2)
+                    y1 = int(y_center - height/2)
+                    x2 = int(x_center + width/2)
+                    y2 = int(y_center + height/2)
+                    
+                    # Ensure bbox is within 416x416 bounds
+                    x1 = max(0, min(x1, self.input_size))
+                    y1 = max(0, min(y1, self.input_size))
+                    x2 = max(0, min(x2, self.input_size))
+                    y2 = max(0, min(y2, self.input_size))
+                    
+                    # Skip invalid bboxes
+                    if x2 <= x1 or y2 <= y1:
+                        continue
+                    
+                    raw_detections.append({
+                        'bbox_416': [x1, y1, x2, y2],
                         'class_id': int(class_id),
                         'class_name': self.class_names[int(class_id)],
                         'confidence': conf
                     })
         
-        return detections, inference_time
+        # Apply NMS on 416x416 space
+        nms_detections = self.nms(raw_detections, iou_threshold=0.5)
+        
+        # Scale final detections to original coordinates
+        for det in nms_detections:
+            bbox_416 = det['bbox_416']
+            
+            # Scale to original image coordinates
+            scaled_bbox = self.scale_bbox_to_original(
+                bbox_416,
+                cropped_frame.shape,  # cropped shape (h, w)
+                original_frame.shape,  # original shape (h, w)
+                crop_start_x
+            )
+            
+            detections.append({
+                'bbox': scaled_bbox,
+                'class_id': det['class_id'],
+                'class_name': det['class_name'],
+                'confidence': det['confidence']
+            })
+        
+        # Draw detections on original frame
+        annotated_frame = self.draw_detections(original_frame, detections)
+        
+        return annotated_frame, detections, inference_time
     
     def update_stats(self, detections, inference_time):
         """Update detection statistics"""
@@ -213,7 +379,7 @@ def main():
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
             
             # Detect defects
-            detections, inference_time = detector.detect_frame(frame)
+            annotated_frame, detections, inference_time = detector.detect_frame(frame)
             
             # Update statistics
             detector.update_stats(detections, inference_time)
