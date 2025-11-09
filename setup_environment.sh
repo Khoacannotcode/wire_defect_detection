@@ -55,6 +55,26 @@ sudo apt install -y \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-libav
 
+SYSTEM_CV2_PATH=$(python3 - <<'PYCODE'
+import importlib
+try:
+    import cv2  # noqa: F401
+except ImportError:
+    print("", end="")
+else:
+    import cv2
+    print(cv2.__file__, end="")
+PYCODE
+)
+
+if [[ -z "$SYSTEM_CV2_PATH" ]]; then
+    echo "ERROR: System OpenCV installation not detected. Ensure python3-opencv is installed."
+    exit 1
+fi
+
+SYSTEM_CV2_DIR=$(dirname "$SYSTEM_CV2_PATH")
+echo "Detected system OpenCV module at $SYSTEM_CV2_PATH"
+
 echo "System dependencies installed"
 
 print_section "2/4" "Setting up Python virtual environment"
@@ -68,6 +88,15 @@ fi
 source venv/bin/activate
 pip install --upgrade pip setuptools wheel
 
+VENV_SITE_PACKAGES=$(python - <<'PYCODE'
+import site
+print(site.getsitepackages()[0], end="")
+PYCODE
+)
+
+echo "$SYSTEM_CV2_DIR" > "$VENV_SITE_PACKAGES/opencv-system.pth"
+export PYTHONPATH="$SYSTEM_CV2_DIR:${PYTHONPATH:-}"
+
 print_section "3/4" "Installing Python packages"
 
 if [[ -f requirements_simple.txt ]]; then
@@ -76,10 +105,60 @@ else
     pip install --no-cache-dir numpy pillow tqdm
 fi
 
-if ! pip install --no-cache-dir onnxruntime-gpu; then
-    echo "[WARN] onnxruntime-gpu install failed, falling back to CPU build"
-    pip install --no-cache-dir onnxruntime
+if ! python - <<'PYCODE'
+try:
+    import onnxruntime as ort
+    available = ort.get_available_providers()
+    if "CUDAExecutionProvider" in available:
+        raise SystemExit(0)
+    raise SystemExit(1)
+except Exception:
+    raise SystemExit(1)
+PYCODE
+then
+    pip uninstall -y onnxruntime onnxruntime_gpu >/dev/null 2>&1 || true
+
+    PYTHON_VERSION=$(python - <<'PYCODE'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}", end="")
+PYCODE
+)
+
+    case "$PYTHON_VERSION" in
+        3.6)
+            DEFAULT_ONNXRUNTIME_GPU_WHEEL="https://developer.download.nvidia.com/compute/redist/jp/v46/onnxruntime/onnxruntime_gpu-1.10.0-cp36-cp36m-linux_aarch64.whl"
+            ;;
+        3.8)
+            DEFAULT_ONNXRUNTIME_GPU_WHEEL="https://developer.download.nvidia.com/compute/redist/jp/v502/onnxruntime/onnxruntime_gpu-1.12.1-cp38-cp38-linux_aarch64.whl"
+            ;;
+        3.10)
+            DEFAULT_ONNXRUNTIME_GPU_WHEEL="https://developer.download.nvidia.com/compute/redist/jp/v60/onnxruntime/onnxruntime_gpu-1.16.1-cp310-cp310-linux_aarch64.whl"
+            ;;
+        *)
+            echo "ERROR: Unsupported Python version $PYTHON_VERSION for automatic onnxruntime-gpu installation."
+            echo "       Set ONNXRUNTIME_GPU_WHEEL to a compatible wheel URL or local path and rerun."
+            exit 1
+            ;;
+    esac
+
+    ONNXRUNTIME_GPU_WHEEL=${ONNXRUNTIME_GPU_WHEEL:-$DEFAULT_ONNXRUNTIME_GPU_WHEEL}
+
+    if [[ -z "$ONNXRUNTIME_GPU_WHEEL" ]]; then
+        echo "ERROR: No onnxruntime-gpu wheel specified."
+        exit 1
+    fi
+
+    echo "Installing onnxruntime-gpu from $ONNXRUNTIME_GPU_WHEEL"
+    pip install --no-cache-dir "$ONNXRUNTIME_GPU_WHEEL"
 fi
+
+python - <<'PYCODE'
+import onnxruntime as ort
+providers = ort.get_available_providers()
+if "CUDAExecutionProvider" not in providers:
+    raise SystemExit("CUDAExecutionProvider not available after onnxruntime-gpu installation")
+print(f"  onnxruntime GPU providers: {providers}")
+PYCODE
 
 print_section "4/4" "Running validation checks"
 
@@ -118,6 +197,9 @@ try:
 except Exception as exc:
     print(f"  Camera check failed: {exc}")
 PYCODE
+
+import cv2
+print(f"  OpenCV version: {cv2.__version__}")
 
 echo ""
 echo "Setup complete!"

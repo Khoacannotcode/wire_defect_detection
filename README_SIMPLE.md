@@ -21,7 +21,7 @@ The script will:
 1. Install Jetson-friendly APT packages (Python, OpenCV, GStreamer, build tools)
 2. Create a virtual environment **with system site-packages** (`python3 -m venv --system-site-packages venv`)
 3. Install Python packages from `requirements_simple.txt`
-4. Install `onnxruntime-gpu` when available (falls back to `onnxruntime` CPU)
+4. Install a Jetson-specific `onnxruntime-gpu` wheel (defaults to NVIDIA’s download for the detected Python version—override with `ONNXRUNTIME_GPU_WHEEL=<path-or-url>`)
 5. Run smoke tests (imports, model loading, `/dev/video0` capture)
 
 Manual steps (if you prefer full control):
@@ -37,7 +37,9 @@ python3 -m venv --system-site-packages venv
 source venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install -r requirements_simple.txt
-pip install onnxruntime-gpu  # or onnxruntime if GPU wheel unavailable
+# install NVIDIA's onnxruntime-gpu wheel (pick the version matching your JetPack)
+export ONNXRUNTIME_GPU_WHEEL="<path-or-url-to-wheel>"
+python -m pip install --no-cache-dir "$ONNXRUNTIME_GPU_WHEEL"
 ```
 
 ## 3. Validate With Sample Images
@@ -72,7 +74,7 @@ Console output prints rolling FPS and class counts every ~10 analysed frames.
 ## 5. Troubleshooting
 | Issue | Fix |
 |-------|------|
-| `onnxruntime-gpu` wheel not found | Use `pip install onnxruntime` (CPU mode) |
+| `onnxruntime-gpu` wheel unavailable | Download the NVIDIA Jetson wheel matching your Python version and set `ONNXRUNTIME_GPU_WHEEL=/path/to/onnxruntime_gpu.whl` before running the setup script |
 | Cannot open `/dev/video0` | Check `v4l2-ctl --list-devices`, ensure user in `video` group (`sudo usermod -aG video $USER && sudo reboot`) |
 | CSI pipeline errors | Restart drivers: `sudo systemctl restart nvargus-daemon` |
 | Low FPS | Lower `self.input_size` (e.g. 320) in both scripts, or reduce resolution/FPS flags |
