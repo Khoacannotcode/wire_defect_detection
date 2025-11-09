@@ -241,12 +241,13 @@ class SimpleWireDetector:
 
     def postprocess(self, output, ratio, dwdh, cropped_shape):
         """Extract detections from YOLO model output with NMS."""
-        print(f"ONNX output shape: {output.shape}")
+        # This part of the log is now less relevant as the main timer captures the whole process.
+        # print(f"ONNX output shape: {output.shape}")
 
         if output.ndim == 3:
             output = output[0]
 
-        print(f"After batch removal: {output.shape}")
+        # print(f"After batch removal: {output.shape}")
 
         raw_detections = []
 
@@ -283,12 +284,14 @@ class SimpleWireDetector:
 
         final_detections = self.nms(raw_detections, iou_threshold=0.5)
 
-        print(f"Detections found: {len(final_detections)}")
+        # print(f"Detections found: {len(final_detections)}")
 
         return final_detections
     
     def detect_image(self, image_path):
         """Detect defects in a single image"""
+        processing_start_time = time.time()
+
         # Expected results for validation (from learning_based)
         expected_results = {
             '0bfb41.jpg': [('pagan', 0.912), ('valid', 0.851), ('valid', 0.808), ('fail', 0.780)],
@@ -301,22 +304,20 @@ class SimpleWireDetector:
         # Load image
         image = cv2.imread(str(image_path))
         if image is None:
-            return None, []
+            return None, [], 0
         
         original_image = image.copy()
-        print(f"  Original image: {image.shape[1]}x{image.shape[0]}")
+        # print(f"  Original image: {image.shape[1]}x{image.shape[0]}")
         
         # Crop to ROI
         cropped_image, crop_start_x = self.crop_to_roi(image)
-        print(f"  Cropped image: {cropped_image.shape[1]}x{cropped_image.shape[0]}")
+        # print(f"  Cropped image: {cropped_image.shape[1]}x{cropped_image.shape[0]}")
         
         # Preprocess (resize to 416x416)
         input_data, ratio, dwdh = self.preprocess(cropped_image)
         
         # Run inference
-        start_time = time.time()
         outputs = self.session.run(None, {self.input_name: input_data})
-        inference_time = time.time() - start_time
         
         # Postprocess
         detections = self.postprocess(outputs[0], ratio, dwdh, cropped_image.shape)
@@ -377,7 +378,8 @@ class SimpleWireDetector:
                 cv2.putText(result_image, label, (bbox[0], bbox[1]-10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         
-        return result_image, scaled_detections, inference_time
+        processing_time = time.time() - processing_start_time
+        return result_image, scaled_detections, processing_time
 
 def test_images():
     """Test detection with sample images"""
@@ -433,19 +435,19 @@ def test_images():
         print(f"[{i}/{len(image_files)}] Testing: {image_path.name}")
         
         try:
-            result_image, detections, inference_time = detector.detect_image(image_path)
+            result_image, detections, processing_time = detector.detect_image(image_path)
             
             if result_image is not None:
                 # Count detections
                 total_detections += len(detections)
-                total_time += inference_time
+                total_time += processing_time
                 
                 # Update class counts
                 for det in detections:
                     class_counts[det['class_name']] += 1
                 
                 # Print results
-                print(f"  [TIME] Inference: {inference_time*1000:.1f}ms")
+                print(f"  [TIME] Processing: {processing_time*1000:.1f}ms")
                 print(f"  [DETECT] Detections: {len(detections)}")
                 
                 for det in detections:

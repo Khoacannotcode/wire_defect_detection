@@ -260,6 +260,7 @@ class LiveWireDetector:
     
     def detect_frame(self, frame):
         """Detect defects in a frame and return annotated frame"""
+        start_time = time.time()
         original_frame = frame.copy()
         
         # Crop to ROI
@@ -269,9 +270,7 @@ class LiveWireDetector:
         input_data, ratio, dwdh = self.preprocess(cropped_frame)
  
         # Run inference
-        start_time = time.time()
         outputs = self.session.run(None, {self.input_name: input_data})
-        inference_time = time.time() - start_time
  
         detections = self.postprocess(outputs[0], ratio, dwdh, cropped_frame.shape)
 
@@ -295,7 +294,8 @@ class LiveWireDetector:
 
         annotated_frame = self.draw_detections(original_frame, scaled_detections)
 
-        return annotated_frame, scaled_detections, inference_time
+        processing_time = time.time() - start_time
+        return annotated_frame, scaled_detections, processing_time
 
     def postprocess(self, output, ratio, dwdh, cropped_shape):
         if output.ndim == 3:
@@ -477,12 +477,12 @@ def main():
                 print("\n[WARN] Failed to read frame - stopping")
                 break
 
-            annotated_frame, detections, inference_time = detector.detect_frame(frame)
+            annotated_frame, detections, processing_time = detector.detect_frame(frame)
 
             total_frames += 1
 
             if total_frames > warmup_frames:
-                detector.update_stats(detections, inference_time)
+                detector.update_stats(detections, processing_time)
                 processed_frames += 1
 
                 if processed_frames % 10 == 0:
