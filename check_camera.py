@@ -12,18 +12,31 @@ import subprocess
 
 def get_csi_pipeline(capture_width=1280, capture_height=720, framerate=30):
     """
-    Returns the GStreamer pipeline string for a CSI camera on Jetson.
+    Returns GStreamer pipeline variants for CSI camera on Jetson, compatible with OpenCV 3.2.0.
     """
-    return (
-        "nvarguscamerasrc ! "
-        "video/x-raw(memory:NVMM), "
-        f"width=(int){capture_width}, height=(int){capture_height}, "
-        f"format=(string)NV12, framerate=(fraction){framerate}/1 ! "
-        "nvvidconv flip-method=0 ! "
-        f"video/x-raw, width=(int){capture_width}, height=(int){capture_height}, format=(string)BGRx ! "
-        "videoconvert ! "
-        "video/x-raw, format=(string)BGR ! appsink"
+    # Simple pipeline for OpenCV 3.2.0 compatibility
+    simple_pipeline = (
+        f"nvarguscamerasrc ! "
+        f"video/x-raw(memory:NVMM), width={capture_width}, height={capture_height}, "
+        f"format=NV12, framerate={framerate}/1 ! "
+        f"nvvidconv ! "
+        f"video/x-raw, format=BGRx ! "
+        f"videoconvert ! "
+        f"appsink"
     )
+    
+    # Even simpler pipeline for older OpenCV
+    basic_pipeline = (
+        f"nvarguscamerasrc ! "
+        f"nvvidconv ! "
+        f"video/x-raw, format=BGR ! "
+        f"appsink"
+    )
+    
+    # Most basic pipeline
+    minimal_pipeline = "nvarguscamerasrc ! nvvidconv ! appsink"
+    
+    return [simple_pipeline, basic_pipeline, minimal_pipeline]
 
 def check_v4l2_devices():
     """
@@ -85,38 +98,45 @@ def test_camera_indices(max_indices=10):
 
 def test_csi_camera():
     """
-    Tries to open the CSI camera using a GStreamer pipeline.
+    Tries to open the CSI camera using multiple GStreamer pipeline variants.
     This is the standard method for RPi cameras on Jetson.
     """
     print("=" * 60)
     print("3. Testing for CSI Camera (e.g., Raspberry Pi Camera)...")
     print("-" * 60)
     
-    pipeline = get_csi_pipeline()
-    print("  Using GStreamer pipeline:")
-    print(f"  {pipeline}\n")
+    pipelines = get_csi_pipeline()
     
-    try:
-        cap = cv2.VideoCapture(pipeline)
+    for i, pipeline in enumerate(pipelines):
+        pipeline_name = ["Simple", "Basic", "Minimal"][i]
+        print(f"  Trying {pipeline_name} pipeline:")
+        print(f"  {pipeline}\n")
         
-        if cap.isOpened():
-            print("  [SUCCESS] CSI Camera opened successfully via GStreamer.")
-            # Read a frame to get resolution
-            ret, frame = cap.read()
-            if ret and frame is not None:
-                height, width = frame.shape[:2]
-                print(f"    - Resolution: {width}x{height}")
+        try:
+            cap = cv2.VideoCapture(pipeline)
+            
+            if cap.isOpened():
+                print(f"  [SUCCESS] {pipeline_name} pipeline opened successfully.")
+                # Read a frame to get resolution
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    height, width = frame.shape[:2]
+                    print(f"    - Resolution: {width}x{height}")
+                    print(f"    - CSI Camera working with {pipeline_name} pipeline!\n")
+                    cap.release()
+                    return True
+                else:
+                    print(f"    - NOTE: {pipeline_name} pipeline opened but failed to capture a frame.")
+                cap.release()
             else:
-                print("    - NOTE: Camera opened but failed to capture a frame.")
-            cap.release()
-            return True
-        else:
-            print("  [FAIL] Could not open CSI camera via GStreamer.")
-            cap.release()
-            return False
-    except Exception as e:
-        print(f"  [ERROR] Exception while testing CSI camera: {e}")
-        return False
+                print(f"  [FAIL] {pipeline_name} pipeline could not open.")
+        except Exception as e:
+            print(f"  [ERROR] {pipeline_name} pipeline exception: {e}")
+        
+        print()
+    
+    print("  [FAIL] All CSI camera pipelines failed.")
+    return False
 
 def main():
     print("============================================================")

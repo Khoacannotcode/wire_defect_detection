@@ -392,16 +392,30 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
     """Create a cv2.VideoCapture for USB/CSI cameras or files."""
 
     def _get_csi_pipeline(capture_width, capture_height, framerate):
-        return (
-            "nvarguscamerasrc ! "
-            "video/x-raw(memory:NVMM), "
-            f"width=(int){capture_width}, height=(int){capture_height}, "
-            f"format=(string)NV12, framerate=(fraction){framerate}/1 ! "
-            "nvvidconv flip-method=0 ! "
-            f"video/x-raw, width=(int){capture_width}, height=(int){capture_height}, format=(string)BGRx ! "
-            "videoconvert ! "
-            "video/x-raw, format=(string)BGR ! appsink"
+        """Generate GStreamer pipeline variants for different OpenCV versions"""
+        # Simple pipeline for OpenCV 3.2.0 compatibility
+        simple_pipeline = (
+            f"nvarguscamerasrc ! "
+            f"video/x-raw(memory:NVMM), width={capture_width}, height={capture_height}, "
+            f"format=NV12, framerate={framerate}/1 ! "
+            f"nvvidconv ! "
+            f"video/x-raw, format=BGRx ! "
+            f"videoconvert ! "
+            f"appsink"
         )
+        
+        # Even simpler pipeline for older OpenCV
+        basic_pipeline = (
+            f"nvarguscamerasrc ! "
+            f"nvvidconv ! "
+            f"video/x-raw, format=BGR ! "
+            f"appsink"
+        )
+        
+        # Most basic pipeline
+        minimal_pipeline = "nvarguscamerasrc ! nvvidconv ! appsink"
+        
+        return [simple_pipeline, basic_pipeline, minimal_pipeline]
 
     def _is_int(value: str) -> bool:
         try:
@@ -420,23 +434,36 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
         
         # First try CSI camera with GStreamer pipeline (preferred for Jetson)
         print(f"[INFO] Attempting CSI camera with GStreamer pipeline...")
-        pipeline = _get_csi_pipeline(width, height, fps)
-        try:
-            cap = cv2.VideoCapture(pipeline)
-            if cap.isOpened():
-                # Test if we can actually read a frame
-                ret, test_frame = cap.read()
-                if ret and test_frame is not None:
-                    print(f"[INFO] Successfully opened CSI camera via GStreamer")
-                    return cap
+        pipelines = _get_csi_pipeline(width, height, fps)
+        
+        for i, pipeline in enumerate(pipelines):
+            pipeline_name = ["Simple", "Basic", "Minimal"][i]
+            print(f"[INFO] Trying {pipeline_name} pipeline: {pipeline}")
+            
+            try:
+                cap = cv2.VideoCapture(pipeline)
+                if cap.isOpened():
+                    print(f"[INFO] {pipeline_name} pipeline opened successfully")
+                    # Test if we can actually read a frame
+                    ret, test_frame = cap.read()
+                    if ret and test_frame is not None:
+                        print(f"[INFO] Successfully opened CSI camera via {pipeline_name} GStreamer pipeline")
+                        print(f"[INFO] Frame size: {test_frame.shape[1]}x{test_frame.shape[0]}")
+                        return cap
+                    else:
+                        print(f"[INFO] {pipeline_name} pipeline opened but cannot read frames")
+                        cap.release()
                 else:
-                    print(f"[INFO] CSI camera opened but cannot read frames")
+                    print(f"[INFO] {pipeline_name} pipeline failed to open")
                     cap.release()
-            else:
-                print(f"[INFO] CSI camera not available via GStreamer")
-                cap.release()
-        except Exception as e:
-            print(f"[INFO] CSI camera failed: {e}")
+            except Exception as e:
+                print(f"[INFO] {pipeline_name} pipeline failed: {e}")
+                try:
+                    cap.release()
+                except:
+                    pass
+        
+        print(f"[INFO] All CSI camera pipelines failed")
 
         # Fallback to USB camera with frame validation
         print(f"[INFO] Attempting USB camera at index {device_index}...")
