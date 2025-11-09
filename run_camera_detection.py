@@ -391,6 +391,18 @@ def parse_args():
 def open_capture(source, width, height, fps, use_gstreamer=False):
     """Create a cv2.VideoCapture for USB/CSI cameras or files."""
 
+    def _get_csi_pipeline(capture_width, capture_height, framerate):
+        return (
+            "nvarguscamerasrc ! "
+            "video/x-raw(memory:NVMM), "
+            f"width=(int){capture_width}, height=(int){capture_height}, "
+            f"format=(string)NV12, framerate=(fraction){framerate}/1 ! "
+            "nvvidconv flip-method=0 ! "
+            f"video/x-raw, width=(int){capture_width}, height=(int){capture_height}, format=(string)BGRx ! "
+            "videoconvert ! "
+            "video/x-raw, format=(string)BGR ! appsink"
+        )
+
     def _is_int(value: str) -> bool:
         try:
             int(value)
@@ -398,28 +410,34 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
         except ValueError:
             return False
 
-    backend = cv2.CAP_GSTREAMER if use_gstreamer else cv2.CAP_ANY
-
+    # Attempt standard V4L2 capture first for USB webcams
     if _is_int(source):
         device_index = int(source)
-        backend = cv2.CAP_GSTREAMER if use_gstreamer else cv2.CAP_V4L2
-        cap = cv2.VideoCapture(device_index, backend)
+        cap = cv2.VideoCapture(device_index, cv2.CAP_V4L2)
+        if cap.isOpened():
+            print(f"[INFO] Successfully opened USB/V4L2 camera at index {device_index}")
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            if fps > 0:
+                cap.set(cv2.CAP_PROP_FPS, fps)
+            return cap
+
+    # If V4L2 fails or source is not an integer, try CSI/GStreamer or file
+    print("[INFO] USB/V4L2 camera not found or source is not an index.")
+    print("[INFO] Attempting to open with GStreamer/file backend...")
+
+    if _is_int(source):
+        # It's an index, but V4L2 failed, so we build the CSI pipeline
+        pipeline = _get_csi_pipeline(width, height, fps)
+        cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
     else:
-        if use_gstreamer:
-            backend = cv2.CAP_GSTREAMER
-            cap = cv2.VideoCapture(source, backend)
-        else:
-            cap = cv2.VideoCapture(source)
+        # Source is a path or a full GStreamer pipeline string
+        backend = cv2.CAP_GSTREAMER if use_gstreamer else cv2.CAP_ANY
+        cap = cv2.VideoCapture(source, backend)
+
 
     if not cap.isOpened():
         raise RuntimeError(f"Unable to open video source: {source}")
-
-    # Configure capture properties when possible (GStreamer pipelines manage these internally)
-    if not use_gstreamer and cap.get(cv2.CAP_PROP_FRAME_WIDTH) > 0:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        if fps > 0:
-            cap.set(cv2.CAP_PROP_FPS, fps)
 
     return cap
 

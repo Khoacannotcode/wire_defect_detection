@@ -229,19 +229,39 @@ else:
     print(f"    - {model_path_original}")
 
 # --- Camera Check ---
+def get_csi_pipeline(capture_width=1280, capture_height=720, framerate=30, display_width=1280, display_height=720):
+    return (
+        "nvarguscamerasrc ! "
+        "video/x-raw(memory:NVMM), "
+        f"width=(int){capture_width}, height=(int){capture_height}, "
+        f"format=(string)NV12, framerate=(fraction){framerate}/1 ! "
+        "nvvidconv flip-method=0 ! "
+        f"video/x-raw, width=(int){display_width}, height=(int){display_height}, format=(string)BGRx ! "
+        "videoconvert ! "
+        "video/x-raw, format=(string)BGR ! appsink"
+    )
+
+print("  --- Camera Check ---")
 try:
+    # First, try the standard V4L2 device
     cam = cv2.VideoCapture(0)
+    if not cam.isOpened():
+        print("  Standard camera at /dev/video0 not found. Trying GStreamer for CSI camera...")
+        csi_pipeline = get_csi_pipeline()
+        cam = cv2.VideoCapture(csi_pipeline, cv2.CAP_GSTREAMER)
+
     if cam.isOpened():
         ret, frame = cam.read()
         if ret and frame is not None:
-            print(f"  Camera detected via /dev/video0 (frame size: {frame.shape[1]}x{frame.shape[0]})")
+            print(f"  [SUCCESS] Camera detected (frame size: {frame.shape[1]}x{frame.shape[0]})")
         else:
-            print("  Camera opened but failed to capture a frame.")
+            print("  [WARN] Camera opened but failed to capture a frame.")
     else:
-        print("  Unable to open /dev/video0 (USB/CSI camera not detected).")
+        print("  [ERROR] Unable to open camera via standard method or GStreamer.")
+        print("          Please check camera connection and kernel driver support.")
     cam.release()
 except Exception as exc:
-    print(f"  Camera check failed: {exc}")
+    print(f"  [ERROR] Camera check failed with exception: {exc}")
 PYCODE
 
 echo ""
