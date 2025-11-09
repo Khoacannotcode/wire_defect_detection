@@ -431,9 +431,18 @@ def main():
     print("=" * 60)
     print()
 
-    model_path = Path(args.model)
-    if not model_path.exists():
-        print(f"❌ Model not found: {model_path}")
+    # Prefer the downgraded opset 16 model if it exists
+    model_path_opset16 = MODELS_DIR / "best_cropped_opset16.onnx"
+    model_path_original = Path(args.model)
+    
+    if model_path_opset16.exists():
+        model_path = model_path_opset16
+        print(f"[INFO] Using downgraded opset 16 model: {model_path}")
+    elif model_path_original.exists():
+        model_path = model_path_original
+        print(f"[INFO] Using original model specified: {model_path}")
+    else:
+        print(f"❌ Model not found: {model_path_original} (and downgraded version not found)")
         return 1
 
     try:

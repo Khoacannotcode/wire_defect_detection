@@ -185,40 +185,52 @@ import onnxruntime as ort
 import os
 import sys
 
-model_path = os.path.join('models', 'best_cropped.onnx')
-if not os.path.isfile(model_path):
-    print(f"  Model file not found at {model_path}, skipping.")
+model_dir = 'models'
+original_model_name = 'best_cropped.onnx'
+downgraded_model_name = 'best_cropped_opset16.onnx'
+
+original_model_path = os.path.join(model_dir, original_model_name)
+downgraded_model_path = os.path.join(model_dir, downgraded_model_name)
+
+if not os.path.isfile(original_model_path):
+    print(f"  Model file not found at {original_model_path}, skipping.")
     sys.exit(0)
 
 TARGET_OPSET = 16
-model_loaded = False
-model_to_test = model_path
 
 try:
-    print(f"  Checking ONNX model: {model_path}")
-    model = onnx.load(model_path)
+    print(f"  Checking ONNX model: {original_model_path}")
+    model = onnx.load(original_model_path)
     opset_version = model.opset_import[0].version
     print(f"  Detected opset version: {opset_version}")
 
+    model_to_validate = original_model_path
+
     if opset_version > TARGET_OPSET:
-        print(f"  Opset version > {TARGET_OPSET}. Downgrading model...")
-        model_downgraded = onnx.version_converter.convert_version(model, TARGET_OPSET)
-        onnx.save(model_downgraded, model_path)
-        print(f"  Model successfully downgraded to opset {TARGET_OPSET} and saved.")
+        print(f"  Opset version > {TARGET_OPSET}. Creating a downgraded model copy...")
+        # Use external data format for models > 2GB, good practice anyway
+        onnx.save_model(
+            model,
+            downgraded_model_path,
+            save_as_external_data=True,
+            all_tensors_to_one_file=True,
+            location=f"{downgraded_model_name}.data",
+            convert_attribute=True,
+        )
+        # Downgrade the original model object for validation
+        model = onnx.version_converter.convert_version(model, TARGET_OPSET)
+        print(f"  Saved downgraded model to: {downgraded_model_path}")
+        model_to_validate = downgraded_model_path
     else:
         print(f"  Opset version is compatible, no changes needed.")
 
-    # Now, try to load the (potentially downgraded) model with ONNX Runtime
-    print("\n  Validating model with ONNX Runtime...")
-    session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
+    # Validate that the correct opset model can be loaded
+    print(f"\n  Validating model ({os.path.basename(model_to_validate)}) with ONNX Runtime...")
+    session = ort.InferenceSession(model_to_validate, providers=['CPUExecutionProvider'])
     print("  [SUCCESS] Model loads successfully with ONNX Runtime.")
-    model_loaded = True
 
 except Exception as e:
-    print(f"  [ERROR] An error occurred: {e}")
-    # Don't exit with error, just report and continue
-    
-if not model_loaded:
+    print(f"  [ERROR] An error occurred during model processing: {e}")
     print("\n  [WARNING] Model validation failed. The application might not run correctly.")
 
 PYCODE
