@@ -42,7 +42,10 @@ sudo apt install -y \
     python3-pip \
     python3-dev \
     python3-numpy \
+    python3-gi \
     python3-opencv \
+    gir1.2-gstreamer-1.0 \
+    gir1.2-gst-plugins-base-1.0 \
     build-essential \
     cmake \
     pkg-config \
@@ -185,6 +188,17 @@ import os
 import sys
 import cv2
 import numpy as np
+
+try:
+    import gi
+    gi.require_version("Gst", "1.0")
+    from gi.repository import Gst
+    if not Gst.is_initialized():
+        Gst.init(None)
+    print("  PyGObject + GStreamer bindings detected")
+except Exception as exc:
+    print(f"  [ERROR] PyGObject/GStreamer import failed: {exc}")
+    sys.exit(1)
 
 # --- System Checks ---
 try:

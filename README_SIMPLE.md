@@ -28,6 +28,7 @@ Manual steps (if you prefer full control):
 ```bash
 sudo apt update
 sudo apt install python3-venv python3-pip python3-dev python3-opencv python3-numpy \
+                 python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
                  build-essential cmake pkg-config libopenblas-dev liblapack-dev \
                  v4l-utils gstreamer1.0-tools gstreamer1.0-plugins-base \
                  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
@@ -40,6 +41,12 @@ pip install -r requirements_simple.txt
 # install NVIDIA's onnxruntime-gpu wheel (pick the version matching your JetPack)
 export ONNXRUNTIME_GPU_WHEEL="<path-or-url-to-wheel>"
 python -m pip install --no-cache-dir "$ONNXRUNTIME_GPU_WHEEL"
+```
+
+After the script (or manual steps) complete, verify that the GStreamer Python bindings are visible inside the virtual environment:
+```bash
+source venv/bin/activate
+python -c "import gi; gi.require_version('Gst', '1.0'); from gi.repository import Gst; print('GStreamer bindings OK')"
 ```
 
 ## 3. Validate With Sample Images
@@ -64,6 +71,28 @@ python run_camera_detection.py \
   --source "nvarguscamerasrc ! video/x-raw(memory:NVMM),width=1280,height=720,format=NV12,framerate=30/1 ! nvvidconv ! video/x-raw,format=BGRx ! videoconvert ! appsink" \
   --display
 ```
+
+### 4.3 When OpenCV reports `GStreamer: NO`
+JetPack 4.x ships with the legacy OpenCV 3.2.0 build which is **compiled without GStreamer bindings**.  
+Symptoms inside `run_camera_detection.py`:
+- `cv2.getBuildInformation()` prints `GStreamer: NO`
+- `VideoCapture("nvarguscamerasrc ! ...")` always fails even though `gst-launch-1.0 nvarguscamerasrc ! nvvidconv ! xvimagesink` works
+- The script falls back to USB/V4L2 paths and ends up reading zero frames
+
+**Workaround provided here**
+- The setup script installs PyGObject (`python3-gi`) plus the GStreamer GIR bindings
+- The live detection script detects the missing OpenCV support and switches to a pure-GStreamer capture path (using `gi.repository.Gst` + `AppSink`) so CSI cameras stream reliably
+- Just run the usual command (`python run_camera_detection.py --source 0 ...`) and the fallback engages automatically when OpenCV lacks GStreamer
+- If you later rebuild or replace OpenCV (e.g. install OpenCV 4.x with GStreamer), re-run `./setup_environment.sh` so the virtualenv picks up the new system package
+
+**Quick camera validation after setup**
+```bash
+source venv/bin/activate
+python run_camera_detection.py --source 0 --width 1280 --height 720 --fps 30 --warmup 0 --display
+```
+You should see the FPS counter increasing and annotated frames in the preview window. Press **Ctrl+C** or **q** to stop.
+
+**Alternative** — upgrade OpenCV: rebuild or install an OpenCV 4.x package that enables GStreamer (`WITH_GSTREAMER=ON`). After replacing OpenCV, re-run `setup_environment.sh` so the virtualenv sees the new install.
 
 Optional flags:
 - `--warmup <n>`: skip the first *n* frames before collecting stats (default 5)

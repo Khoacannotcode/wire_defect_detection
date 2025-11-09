@@ -17,6 +17,20 @@ import tempfile
 from collections import deque
 from pathlib import Path
 
+# Optional PyGObject / GStreamer bindings
+GST_AVAILABLE = False
+try:
+    import gi  # type: ignore
+
+    gi.require_version("Gst", "1.0")
+    from gi.repository import Gst  # type: ignore
+
+    if not Gst.is_initialized():
+        Gst.init(None)
+    GST_AVAILABLE = True
+except (ImportError, ValueError):
+    GST_AVAILABLE = False
+
 # Add system packages to path for compatibility
 sys.path.insert(0, '/usr/lib/python3/dist-packages')
 
@@ -141,6 +155,121 @@ class UDPGStreamerCapture:
             self.gst_process = None
         
         self.is_opened = False
+
+
+class GStreamerCSICapture:
+    """Pure GStreamer CSI capture using PyGObject when OpenCV lacks GStreamer."""
+
+    def __init__(self, width=1280, height=720, fps=30):
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.pipeline = None
+        self.appsink = None
+        self.is_opened = False
+        self.bus = None
+
+    def _build_pipeline(self):
+        return (
+            "nvarguscamerasrc ! "
+            f"video/x-raw(memory:NVMM), width={self.width}, height={self.height}, format=NV12, framerate={self.fps}/1 ! "
+            "nvvidconv ! "
+            "video/x-raw, format=BGRx ! "
+            "videoconvert ! "
+            "video/x-raw, format=BGR ! "
+            "appsink name=csiappsink emit-signals=false max-buffers=1 drop=true sync=false"
+        )
+
+    def open(self):
+        if not GST_AVAILABLE:
+            print("[WARN] PyGObject GStreamer bindings missing - cannot use CSI fallback")
+            return False
+
+        if self.is_opened:
+            return True
+
+        try:
+            description = self._build_pipeline()
+            self.pipeline = Gst.parse_launch(description)
+            self.appsink = self.pipeline.get_by_name("csiappsink")
+            if self.appsink is None:
+                print("[ERROR] GStreamer pipeline missing appsink element")
+                self.release()
+                return False
+
+            self.appsink.set_property("emit-signals", False)
+            self.appsink.set_property("max-buffers", 1)
+            self.appsink.set_property("drop", True)
+            self.appsink.set_property("sync", False)
+
+            self.bus = self.pipeline.get_bus()
+
+            state_change = self.pipeline.set_state(Gst.State.PLAYING)
+            if state_change == Gst.StateChangeReturn.FAILURE:
+                print("[ERROR] Failed to start GStreamer pipeline")
+                self.release()
+                return False
+
+            if self.bus:
+                msg = self.bus.timed_pop_filtered(
+                    2 * Gst.SECOND,
+                    Gst.MessageType.ERROR | Gst.MessageType.EOS,
+                )
+                if msg:
+                    err, debug = msg.parse_error()
+                    print(f"[ERROR] GStreamer pipeline error: {err} ({debug})")
+                    self.release()
+                    return False
+
+            self.is_opened = True
+            print("[INFO] Using PyGObject GStreamer capture for CSI camera")
+            return True
+        except Exception as exc:
+            print(f"[ERROR] Failed to initialize GStreamer capture: {exc}")
+            self.release()
+            return False
+
+    def isOpened(self):
+        return self.is_opened
+
+    def read(self):
+        if not self.is_opened or self.appsink is None:
+            return False, None
+
+        try:
+            sample = self.appsink.emit("try-pull-sample", Gst.SECOND)
+            if sample is None:
+                return False, None
+
+            buffer = sample.get_buffer()
+            caps = sample.get_caps()
+            structure = caps.get_structure(0)
+            width = structure.get_value('width')
+            height = structure.get_value('height')
+
+            success, map_info = buffer.map(Gst.MapFlags.READ)
+            if not success:
+                return False, None
+
+            frame = np.frombuffer(map_info.data, dtype=np.uint8)
+            frame = frame.reshape((height, width, 3)).copy()
+            buffer.unmap(map_info)
+            return True, frame
+        except Exception as exc:
+            print(f"[ERROR] GStreamer read failed: {exc}")
+            return False, None
+
+    def release(self):
+        if self.pipeline:
+            try:
+                self.pipeline.set_state(Gst.State.NULL)
+            except Exception:
+                pass
+        self.pipeline = None
+        self.appsink = None
+        self.bus = None
+        self.is_opened = False
+
 
 def setup_v4l2_loopback(width=1280, height=720, fps=30):
     """Setup V4L2 loopback device for CSI camera access"""
@@ -728,8 +857,19 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
     # For Jetson with CSI camera, prioritize GStreamer pipeline
     if _is_int(source):
         device_index = int(source)
+
+        if not has_gstreamer:
+            if GST_AVAILABLE:
+                print("[INFO] OpenCV build lacks GStreamer - trying PyGObject CSI capture")
+                gst_capture = GStreamerCSICapture(width, height, fps)
+                if gst_capture.open():
+                    return gst_capture
+                else:
+                    print("[INFO] PyGObject CSI capture failed, trying additional fallbacks")
+            else:
+                print("[WARN] python3-gi not installed; cannot use PyGObject CSI fallback")
         
-        # First try CSI camera with GStreamer pipeline (preferred for Jetson)
+        # First try CSI camera with GStreamer pipeline (preferred for Jetson when available)
         if has_gstreamer:
             print(f"[INFO] Attempting CSI camera with GStreamer pipeline...")
             pipelines = _get_csi_pipeline(width, height, fps)
@@ -864,6 +1004,7 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
     print("2. SOFTWARE VERIFICATION:")
     print("   - Test camera with: gst-launch-1.0 nvarguscamerasrc ! nvvidconv ! xvimagesink")
     print("   - Check GStreamer plugins: gst-inspect-1.0 nvarguscamerasrc")
+    print("   - Verify PyGObject bindings: python3 -c \"import gi; gi.require_version('Gst','1.0')\"")
     print("   - Verify camera permissions: ls -la /dev/video*")
     print()
     print("3. SYSTEM CHECKS:")
@@ -874,7 +1015,7 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
     print("4. OPENCV COMPATIBILITY:")
     print(f"   - OpenCV version: {cv2.__version__}")
     print(f"   - GStreamer support: {'Yes' if has_gstreamer else 'No'}")
-    print("   - Consider upgrading OpenCV or installing with GStreamer support")
+    print("   - Consider upgrading OpenCV or rely on the PyGObject fallback added in this repo")
     print()
     print("5. ALTERNATIVE SOLUTIONS:")
     print("   - Install v4l2loopback: sudo apt install v4l2loopback-dkms")
