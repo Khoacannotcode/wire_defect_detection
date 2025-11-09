@@ -90,7 +90,7 @@ python3 -m venv --system-site-packages venv
 source venv/bin/activate
 
 echo "Upgrading pip, setuptools, and wheel..."
-python -m pip install --upgrade pip setuptools wheel
+python -m pip install --no-cache-dir --upgrade pip setuptools wheel
 
 VENV_SITE_PACKAGES=$(python - <<'PYCODE'
 import site
@@ -104,9 +104,9 @@ export PYTHONPATH="$SYSTEM_CV2_DIR:${PYTHONPATH:-}"
 print_section "3/4" "Installing Python packages"
 
 if [[ -f requirements_simple.txt ]]; then
-    pip install --no-cache-dir -r requirements_simple.txt
+    python -m pip install --no-cache-dir -r requirements_simple.txt
 else
-    pip install --no-cache-dir numpy pillow tqdm
+    python -m pip install --no-cache-dir numpy pillow tqdm
 fi
 
 if ! python - <<'PYCODE'
@@ -120,7 +120,7 @@ except Exception:
     raise SystemExit(1)
 PYCODE
 then
-    pip uninstall -y onnxruntime onnxruntime_gpu >/dev/null 2>&1 || true
+    python -m pip uninstall -y onnxruntime onnxruntime_gpu >/dev/null 2>&1 || true
 
     PYTHON_VERSION=$(python - <<'PYCODE'
 import sys
@@ -153,7 +153,7 @@ PYCODE
     fi
 
     echo "Installing onnxruntime-gpu from $ONNXRUNTIME_GPU_WHEEL"
-    pip install --no-cache-dir "$ONNXRUNTIME_GPU_WHEEL"
+    python -m pip install --no-cache-dir "$ONNXRUNTIME_GPU_WHEEL"
 fi
 
 python - <<'PYCODE'
