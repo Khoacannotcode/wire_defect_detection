@@ -176,7 +176,41 @@ if "CUDAExecutionProvider" not in providers:
 print(f"  onnxruntime GPU providers: {providers}")
 PYCODE
 
-print_section "4/4" "Running validation checks"
+print_section "4/4" "Downgrading ONNX model if needed"
+python - <<'PYCODE'
+import onnx
+import os
+import sys
+
+model_path = os.path.join('models', 'best_cropped.onnx')
+if not os.path.isfile(model_path):
+    print(f"  Model file not found at {model_path}, skipping opset check.")
+    sys.exit(0)
+
+try:
+    print(f"  Checking ONNX model opset version for {model_path}...")
+    model = onnx.load(model_path)
+    # The first opset import is usually the ai.onnx domain
+    opset_version = model.opset_import[0].version
+    print(f"  Detected opset version: {opset_version}")
+
+    TARGET_OPSET = 16
+    if opset_version > TARGET_OPSET:
+        print(f"  Opset version > {TARGET_OPSET}. Downgrading model...")
+        model_downgraded = onnx.version_converter.convert_version(model, TARGET_OPSET)
+        onnx.save(model_downgraded, model_path)
+        print(f"  Model successfully downgraded to opset {TARGET_OPSET}.")
+    else:
+        print(f"  Opset version is compatible, no changes needed.")
+
+except Exception as e:
+    print(f"  An error occurred during ONNX opset check/conversion: {e}")
+    print("  Please check the model file or the onnx installation.")
+    # Exiting with 0 to not fail the whole script if model conversion fails
+    sys.exit(0)
+PYCODE
+
+print_section "5/4" "Running validation checks"
 
 python - <<'PYCODE'
 import os
@@ -214,8 +248,7 @@ except Exception as exc:
     print(f"  Camera check failed: {exc}")
 PYCODE
 
-import cv2
-print(f"  OpenCV version: {cv2.__version__}")
+python -c "import cv2; print(f'  OpenCV version: {cv2.__version__}')"
 
 echo ""
 echo "Setup complete!"
