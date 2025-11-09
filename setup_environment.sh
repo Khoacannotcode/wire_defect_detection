@@ -207,19 +207,18 @@ try:
     model_to_validate = original_model_path
 
     if opset_version > TARGET_OPSET:
-        print(f"  Opset version > {TARGET_OPSET}. Creating a downgraded model copy...")
+        print(f"  Opset version > {TARGET_OPSET}. Downgrading model in memory...")
+        model_downgraded = onnx.version_converter.convert_version(model, TARGET_OPSET)
+        
+        print(f"  Saving downgraded model to: {downgraded_model_path}")
         # Use external data format for models > 2GB, good practice anyway
         onnx.save_model(
-            model,
+            model_downgraded,
             downgraded_model_path,
             save_as_external_data=True,
             all_tensors_to_one_file=True,
             location=f"{downgraded_model_name}.data",
-            convert_attribute=True,
         )
-        # Downgrade the original model object for validation
-        model = onnx.version_converter.convert_version(model, TARGET_OPSET)
-        print(f"  Saved downgraded model to: {downgraded_model_path}")
         model_to_validate = downgraded_model_path
     else:
         print(f"  Opset version is compatible, no changes needed.")
