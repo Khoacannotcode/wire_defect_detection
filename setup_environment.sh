@@ -78,6 +78,35 @@ else
     pip install --no-cache-dir numpy pillow tqdm
 fi
 
+# Ensure OpenCV is available inside the virtual environment
+python - <<'PYCODE'
+import sys
+try:
+    import cv2  # noqa: F401
+except ImportError:
+    print("  System OpenCV not visible in virtual environment. Trying to link site-packages...")
+    import site
+    from pathlib import Path
+    venv_site = Path(site.getsitepackages()[0])
+    system_path = Path('/usr/lib/python3/dist-packages/cv2')
+    if system_path.exists():
+        target = venv_site / 'cv2'
+        if not target.exists():
+            target.symlink_to(system_path)
+            print(f"  Linked {system_path} -> {target}")
+        else:
+            print("  cv2 already linked but import still failing")
+    else:
+        print("  System cv2 package not found. Installing python3-opencv inside venv...")
+        import subprocess
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-cache-dir', 'opencv-python-headless'])
+    import cv2  # retry import
+    print(f"  OpenCV available after linking/install. Version: {cv2.__version__}")
+else:
+    import cv2
+    print(f"  OpenCV available via system package. Version: {cv2.__version__}")
+PYCODE
+
 if ! pip install --no-cache-dir onnxruntime-gpu; then
     echo "[WARN] onnxruntime-gpu install failed, falling back to CPU build"
     pip install --no-cache-dir onnxruntime
