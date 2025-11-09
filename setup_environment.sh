@@ -48,6 +48,8 @@ sudo apt install -y \
     pkg-config \
     libopenblas-dev \
     liblapack-dev \
+    libjpeg-dev \
+    zlib1g-dev \
     v4l-utils \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
