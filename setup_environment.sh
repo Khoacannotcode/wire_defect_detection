@@ -178,99 +178,71 @@ if "CUDAExecutionProvider" not in providers:
 print(f"  onnxruntime GPU providers: {providers}")
 PYCODE
 
-print_section "4/4" "Checking and Downgrading ONNX model"
+print_section "4/4" "Running validation checks"
+
 python - <<'PYCODE'
-import onnx
-import onnxruntime as ort
 import os
 import sys
-
-model_dir = 'models'
-original_model_name = 'best_cropped.onnx'
-downgraded_model_name = 'best_cropped_opset16.onnx'
-
-original_model_path = os.path.join(model_dir, original_model_name)
-downgraded_model_path = os.path.join(model_dir, downgraded_model_name)
-
-if not os.path.isfile(original_model_path):
-    print(f"  Model file not found at {original_model_path}, skipping.")
-    sys.exit(0)
-
-TARGET_OPSET = 16
-
-try:
-    print(f"  Checking ONNX model: {original_model_path}")
-    model = onnx.load(original_model_path)
-    opset_version = model.opset_import[0].version
-    print(f"  Detected opset version: {opset_version}")
-
-    model_to_validate = original_model_path
-
-    if opset_version > TARGET_OPSET:
-        print(f"  Opset version > {TARGET_OPSET}. Downgrading model in memory...")
-        model_downgraded = onnx.version_converter.convert_version(model, TARGET_OPSET)
-        
-        print(f"  Saving downgraded model to: {downgraded_model_path}")
-        # Use external data format for models > 2GB, good practice anyway
-        onnx.save_model(
-            model_downgraded,
-            downgraded_model_path,
-            save_as_external_data=True,
-            all_tensors_to_one_file=True,
-            location=f"{downgraded_model_name}.data",
-        )
-        model_to_validate = downgraded_model_path
-    else:
-        print(f"  Opset version is compatible, no changes needed.")
-
-    # Validate that the correct opset model can be loaded
-    print(f"\n  Validating model ({os.path.basename(model_to_validate)}) with ONNX Runtime...")
-    session = ort.InferenceSession(model_to_validate, providers=['CPUExecutionProvider'])
-    print("  [SUCCESS] Model loads successfully with ONNX Runtime.")
-
-except Exception as e:
-    print(f"  [ERROR] An error occurred during model processing: {e}")
-    print("\n  [WARNING] Model validation failed. The application might not run correctly.")
-
-PYCODE
-
-print_section "5/4" "Running validation checks"
-
-python - <<'PYCODE'
-import os
 import cv2
 import numpy as np
+
+# --- System Checks ---
 try:
     import onnxruntime as ort
     providers = ort.get_available_providers()
     print(f"  onnxruntime available, providers: {providers}")
 except Exception as exc:
-    print(f"  onnxruntime import failed: {exc}")
+    print(f"  [ERROR] onnxruntime import failed: {exc}")
+    sys.exit(1)
 
-model_path = os.path.join('models', 'best_cropped.onnx')
-if os.path.isfile(model_path):
-    # This check is now redundant but kept for consistency
-    # The real test happened in the previous step.
-    print("  Model availability checked.")
+print(f'  OpenCV version: {cv2.__version__}')
+
+# --- Model Check ---
+model_dir = 'models'
+model_path_opset16 = os.path.join(model_dir, "best_cropped_opset16.onnx")
+model_path_original = os.path.join(model_dir, "best_cropped.onnx")
+
+model_to_load = None
+if os.path.exists(model_path_opset16):
+    model_to_load = model_path_opset16
+    print(f"  Found pre-converted model, attempting to load: {model_to_load}")
+elif os.path.exists(model_path_original):
+    model_to_load = model_path_original
+    print(f"  Found original model, attempting to load: {model_to_load}")
+
+if model_to_load:
+    try:
+        session = ort.InferenceSession(model_to_load, providers=['CPUExecutionProvider'])
+        print("  [SUCCESS] Model loads successfully with ONNX Runtime.")
+    except Exception as exc:
+        print(f"\n  [ERROR] Model loading failed: {exc}\n")
+        print("  ================================[ TROUBLESHOOTING ]================================")
+        print("  This error often means the ONNX model's 'opset version' is too new.")
+        print("  The model must be opset 16 or lower to run on this device's environment.")
+        print("  Please convert the model on your development machine using the provided script")
+        print("  and place the converted 'best_cropped_opset16.onnx' file in the 'models' directory.")
+        print("  ====================================================================================\n")
+
 else:
-    print(f"  Model file missing: {model_path}")
+    print(f"  [ERROR] Model file not found. Searched for:")
+    print(f"    - {model_path_opset16}")
+    print(f"    - {model_path_original}")
 
+# --- Camera Check ---
 try:
     cam = cv2.VideoCapture(0)
     if cam.isOpened():
         ret, frame = cam.read()
-        if ret:
+        if ret and frame is not None:
             print(f"  Camera detected via /dev/video0 (frame size: {frame.shape[1]}x{frame.shape[0]})")
         else:
-            print("  Camera opened but no frame returned")
+            print("  Camera opened but failed to capture a frame.")
     else:
-        print("  Unable to open /dev/video0 (USB/CSI camera not detected)")
+        print("  Unable to open /dev/video0 (USB/CSI camera not detected).")
     cam.release()
 except Exception as exc:
     print(f"  Camera check failed: {exc}")
 PYCODE
-
-python -c "import cv2; print(f'  OpenCV version: {cv2.__version__}')"
 
 echo ""
 echo "Setup complete!"
