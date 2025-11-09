@@ -86,6 +86,7 @@ if [[ ! -d venv ]]; then
 fi
 
 source venv/bin/activate
+python -m ensurepip --upgrade
 pip install --upgrade pip setuptools wheel
 
 VENV_SITE_PACKAGES=$(python - <<'PYCODE'
