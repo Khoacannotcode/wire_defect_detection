@@ -38,17 +38,16 @@ def check_v4l2_devices():
             ['v4l2-ctl', '--list-devices'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
             check=True
         )
-        print(result.stdout)
+        print(result.stdout.decode('utf-8'))
         print("NOTE: If you see devices listed, they should be accessible via an index like /dev/video0.\n")
     except FileNotFoundError:
         print("  'v4l2-ctl' command not found. Is 'v4l-utils' installed?")
         print("  You can install it with: sudo apt install v4l-utils\n")
     except subprocess.CalledProcessError as e:
         print("  'v4l2-ctl --list-devices' returned an error. No V4L2 devices found or another issue occurred.")
-        print(f"  Error details: {e.stderr}\n")
+        print(f"  Error details: {e.stderr.decode('utf-8')}\n")
 
 def test_camera_indices(max_indices=10):
     """
