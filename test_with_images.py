@@ -78,7 +78,7 @@ class SimpleWireDetector:
         
         # Model settings
         self.input_size = 416
-        self.crop_ratio = 0.6
+        self.crop_height = 80
         self.conf_threshold = 0.22  # Fine-tuned threshold to get closer to 19 detections
         
         # Class info
@@ -92,12 +92,12 @@ class SimpleWireDetector:
         print("[OK] Model loaded successfully")
     
     def crop_to_roi(self, image):
-        """Crop image to center 60% width"""
+        """Crop image to the central horizontal band used during training."""
         h, w = image.shape[:2]
-        crop_width = int(w * self.crop_ratio)
-        start_x = (w - crop_width) // 2
-        end_x = start_x + crop_width
-        return image[:, start_x:end_x], start_x
+        crop_height = min(self.crop_height, h)
+        start_y = max((h - crop_height) // 2, 0)
+        end_y = start_y + crop_height
+        return image[start_y:end_y, :], start_y
     
     def letterbox(self, image, new_shape=416, color=(114, 114, 114)):
         """Resize image to a square while keeping aspect ratio (YOLO letterbox)."""
@@ -154,19 +154,18 @@ class SimpleWireDetector:
 
         return [x1, y1, x2, y2]
 
-    def shift_bbox_to_original(self, bbox, original_shape, crop_start_x):
+    def shift_bbox_to_original(self, bbox, original_shape, crop_start_y):
         """Translate bbox from cropped coordinates back to original image space."""
         x1, y1, x2, y2 = bbox
 
-        x1 += crop_start_x
-        x2 += crop_start_x
-
         width = original_shape[1]
         height = original_shape[0]
+
         x1 = max(0, min(int(round(x1)), width))
-        y1 = max(0, min(int(round(y1)), height))
         x2 = max(0, min(int(round(x2)), width))
-        y2 = max(0, min(int(round(y2)), height))
+
+        y1 = max(0, min(int(round(y1 + crop_start_y)), height))
+        y2 = max(0, min(int(round(y2 + crop_start_y)), height))
 
         if x2 <= x1 or y2 <= y1:
             return None
@@ -310,7 +309,7 @@ class SimpleWireDetector:
         # print(f"  Original image: {image.shape[1]}x{image.shape[0]}")
         
         # Crop to ROI
-        cropped_image, crop_start_x = self.crop_to_roi(image)
+        cropped_image, crop_start_y = self.crop_to_roi(image)
         # print(f"  Cropped image: {cropped_image.shape[1]}x{cropped_image.shape[0]}")
         
         # Preprocess (resize to 416x416)
@@ -344,7 +343,7 @@ class SimpleWireDetector:
             scaled_bbox = self.shift_bbox_to_original(
                 det['bbox'],
                 original_image.shape,
-                crop_start_x
+                crop_start_y
             )
 
             if scaled_bbox is None:

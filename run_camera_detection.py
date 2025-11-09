@@ -379,7 +379,7 @@ class LiveWireDetector:
 
         # Settings
         self.input_size = 416
-        self.crop_ratio = 0.6
+        self.crop_height = 80
         self.conf_threshold = 0.22
 
         # Class info / colors
@@ -397,12 +397,12 @@ class LiveWireDetector:
         print("✅ Detector ready")
     
     def crop_to_roi(self, frame):
-        """Crop frame to the central region used during training."""
+        """Crop frame to the central horizontal band used during training."""
         h, w = frame.shape[:2]
-        crop_width = int(w * self.crop_ratio)
-        start_x = (w - crop_width) // 2
-        end_x = start_x + crop_width
-        return frame[:, start_x:end_x], start_x
+        crop_height = min(self.crop_height, h)
+        start_y = max((h - crop_height) // 2, 0)
+        end_y = start_y + crop_height
+        return frame[start_y:end_y, :], start_y
 
     def letterbox(self, image, new_shape=416, color=(114, 114, 114)):
         shape = image.shape[:2]
@@ -457,18 +457,17 @@ class LiveWireDetector:
 
         return [x1, y1, x2, y2]
 
-    def shift_bbox_to_original(self, bbox, original_shape, crop_start_x):
+    def shift_bbox_to_original(self, bbox, original_shape, crop_start_y):
         x1, y1, x2, y2 = bbox
-
-        x1 += crop_start_x
-        x2 += crop_start_x
 
         width = original_shape[1]
         height = original_shape[0]
+
         x1 = max(0, min(int(round(x1)), width))
-        y1 = max(0, min(int(round(y1)), height))
         x2 = max(0, min(int(round(x2)), width))
-        y2 = max(0, min(int(round(y2)), height))
+
+        y1 = max(0, min(int(round(y1 + crop_start_y)), height))
+        y2 = max(0, min(int(round(y2 + crop_start_y)), height))
 
         if x2 <= x1 or y2 <= y1:
             return None
@@ -567,7 +566,7 @@ class LiveWireDetector:
         original_frame = frame.copy()
         
         # Crop to ROI
-        cropped_frame, crop_start_x = self.crop_to_roi(frame)
+        cropped_frame, crop_start_y = self.crop_to_roi(frame)
         
         # Preprocess
         input_data, ratio, dwdh = self.preprocess(cropped_frame)
@@ -582,7 +581,7 @@ class LiveWireDetector:
             scaled_bbox = self.shift_bbox_to_original(
                 det['bbox'],
                 original_frame.shape,
-                crop_start_x
+                crop_start_y
             )
 
             if scaled_bbox is None:

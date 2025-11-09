@@ -258,42 +258,99 @@ def get_csi_pipeline(capture_width=1280, capture_height=720, framerate=30, displ
 print("  --- Camera Check ---")
 print(f"  OpenCV version: {cv2.__version__}")
 
-try:
-    # First, try CSI camera with GStreamer pipeline (preferred for Jetson)
-    print("  Attempting CSI camera with GStreamer pipeline...")
-    csi_pipeline = get_csi_pipeline()
-    cam = cv2.VideoCapture(csi_pipeline)
-    
-    if cam.isOpened():
+def try_opencv_csi():
+    print("  Attempting CSI camera with OpenCV + GStreamer pipeline...")
+    pipeline = get_csi_pipeline()
+    cam = cv2.VideoCapture(pipeline)
+    try:
+        if not cam.isOpened():
+            print("  [INFO] OpenCV could not open the CSI pipeline (expected on 3.2.0 without GStreamer).")
+            return False
         ret, frame = cam.read()
         if ret and frame is not None:
-            print(f"  [SUCCESS] CSI Camera detected via GStreamer (frame size: {frame.shape[1]}x{frame.shape[0]})")
-        else:
-            print("  [WARN] CSI Camera opened but failed to capture a frame.")
-        cam.release()
-    else:
-        print("  CSI camera not available via GStreamer. Trying USB camera...")
-        cam.release()
-        
-        # Fallback to USB camera
-        cam = cv2.VideoCapture(0)
-        if cam.isOpened():
-            ret, frame = cam.read()
-            if ret and frame is not None:
-                print(f"  [SUCCESS] USB Camera detected (frame size: {frame.shape[1]}x{frame.shape[0]})")
-            else:
-                print("  [WARN] USB Camera opened but failed to capture a frame.")
-        else:
-            print("  [ERROR] Unable to open camera via GStreamer or USB.")
-            print("          Please check camera connection and kernel driver support.")
+            print(f"  [SUCCESS] CSI camera detected via OpenCV (frame size: {frame.shape[1]}x{frame.shape[0]})")
+            return True
+        print("  [WARN] CSI pipeline opened but returned empty frame.")
+        return False
+    finally:
         cam.release()
 
-except Exception as exc:
-    print(f"  [ERROR] Camera check failed with exception: {exc}")
+def try_pygobject_csi():
+    print("  Attempting CSI camera with PyGObject fallback pipeline...")
+    pipeline_desc = (
+        "nvarguscamerasrc ! "
+        "video/x-raw(memory:NVMM), width=1280, height=720, format=NV12, framerate=30/1 ! "
+        "nvvidconv ! "
+        "video/x-raw, format=BGRx ! "
+        "videoconvert ! "
+        "video/x-raw, format=BGR ! "
+        "appsink name=setupappsink emit-signals=false max-buffers=1 drop=true sync=false"
+    )
+    pipeline = None
     try:
+        pipeline = Gst.parse_launch(pipeline_desc)
+        appsink = pipeline.get_by_name("setupappsink")
+        if appsink is None:
+            print("  [WARN] PyGObject pipeline missing appsink element.")
+            return False
+
+        pipeline.set_state(Gst.State.PLAYING)
+        bus = pipeline.get_bus()
+        if bus:
+            msg = bus.timed_pop_filtered(2 * Gst.SECOND, Gst.MessageType.ERROR | Gst.MessageType.EOS)
+            if msg:
+                err, debug = msg.parse_error()
+                print(f"  [WARN] PyGObject pipeline error: {err} ({debug})")
+                return False
+
+        sample = appsink.emit("try-pull-sample", 2 * Gst.SECOND)
+        if sample is None:
+            print("  [WARN] PyGObject pipeline started but produced no frame.")
+            return False
+
+        buffer = sample.get_buffer()
+        caps = sample.get_caps()
+        structure = caps.get_structure(0)
+        width = structure.get_value('width')
+        height = structure.get_value('height')
+
+        ok, map_info = buffer.map(Gst.MapFlags.READ)
+        if not ok:
+            print("  [WARN] Failed to map buffer from PyGObject pipeline.")
+            return False
+        try:
+            np.frombuffer(map_info.data, dtype=np.uint8).reshape((height, width, 3))
+        finally:
+            buffer.unmap(map_info)
+
+        print(f"  [SUCCESS] CSI camera detected via PyGObject fallback (frame size: {width}x{height})")
+        return True
+    except Exception as exc:
+        print(f"  [WARN] PyGObject fallback failed: {exc}")
+        return False
+    finally:
+        if pipeline:
+            pipeline.set_state(Gst.State.NULL)
+
+def try_usb_camera():
+    print("  Attempting USB camera on /dev/video0 ...")
+    cam = cv2.VideoCapture(0)
+    try:
+        if not cam.isOpened():
+            print("  [WARN] USB camera (/dev/video0) not detected.")
+            return False
+        ret, frame = cam.read()
+        if ret and frame is not None:
+            print(f"  [SUCCESS] USB camera detected (frame size: {frame.shape[1]}x{frame.shape[0]})")
+            return True
+        print("  [WARN] USB camera opened but returned empty frame.")
+        return False
+    finally:
         cam.release()
-    except:
-        pass
+
+if not (try_opencv_csi() or try_pygobject_csi() or try_usb_camera()):
+    print("  [ERROR] Automated camera checks failed. Please validate hardware and drivers manually.")
+    print("          Test with: gst-launch-1.0 nvarguscamerasrc ! nvvidconv ! xvimagesink")
 PYCODE
 
 echo ""
