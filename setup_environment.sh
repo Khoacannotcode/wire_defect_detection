@@ -242,26 +242,44 @@ def get_csi_pipeline(capture_width=1280, capture_height=720, framerate=30, displ
     )
 
 print("  --- Camera Check ---")
-try:
-    # First, try the standard V4L2 device
-    cam = cv2.VideoCapture(0)
-    if not cam.isOpened():
-        print("  Standard camera at /dev/video0 not found. Trying GStreamer for CSI camera...")
-        csi_pipeline = get_csi_pipeline()
-        cam = cv2.VideoCapture(csi_pipeline, cv2.CAP_GSTREAMER)
+print(f"  OpenCV version: {cv2.__version__}")
 
+try:
+    # First, try CSI camera with GStreamer pipeline (preferred for Jetson)
+    print("  Attempting CSI camera with GStreamer pipeline...")
+    csi_pipeline = get_csi_pipeline()
+    cam = cv2.VideoCapture(csi_pipeline)
+    
     if cam.isOpened():
         ret, frame = cam.read()
         if ret and frame is not None:
-            print(f"  [SUCCESS] Camera detected (frame size: {frame.shape[1]}x{frame.shape[0]})")
+            print(f"  [SUCCESS] CSI Camera detected via GStreamer (frame size: {frame.shape[1]}x{frame.shape[0]})")
         else:
-            print("  [WARN] Camera opened but failed to capture a frame.")
+            print("  [WARN] CSI Camera opened but failed to capture a frame.")
+        cam.release()
     else:
-        print("  [ERROR] Unable to open camera via standard method or GStreamer.")
-        print("          Please check camera connection and kernel driver support.")
-    cam.release()
+        print("  CSI camera not available via GStreamer. Trying USB camera...")
+        cam.release()
+        
+        # Fallback to USB camera
+        cam = cv2.VideoCapture(0)
+        if cam.isOpened():
+            ret, frame = cam.read()
+            if ret and frame is not None:
+                print(f"  [SUCCESS] USB Camera detected (frame size: {frame.shape[1]}x{frame.shape[0]})")
+            else:
+                print("  [WARN] USB Camera opened but failed to capture a frame.")
+        else:
+            print("  [ERROR] Unable to open camera via GStreamer or USB.")
+            print("          Please check camera connection and kernel driver support.")
+        cam.release()
+
 except Exception as exc:
     print(f"  [ERROR] Camera check failed with exception: {exc}")
+    try:
+        cam.release()
+    except:
+        pass
 PYCODE
 
 echo ""

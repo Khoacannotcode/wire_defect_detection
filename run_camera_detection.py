@@ -410,34 +410,60 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
         except ValueError:
             return False
 
-    # Attempt standard V4L2 capture first for USB webcams
+    # Check OpenCV version for compatibility
+    cv_version = cv2.__version__
+    print(f"[INFO] OpenCV version: {cv_version}")
+
+    # For Jetson with CSI camera, prioritize GStreamer pipeline
     if _is_int(source):
         device_index = int(source)
-        cap = cv2.VideoCapture(device_index, cv2.CAP_V4L2)
-        if cap.isOpened():
-            print(f"[INFO] Successfully opened USB/V4L2 camera at index {device_index}")
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-            if fps > 0:
-                cap.set(cv2.CAP_PROP_FPS, fps)
-            return cap
-
-    # If V4L2 fails or source is not an integer, try CSI/GStreamer or file
-    print("[INFO] USB/V4L2 camera not found or source is not an index.")
-    print("[INFO] Attempting to open with GStreamer/file backend...")
-
-    if _is_int(source):
-        # It's an index, but V4L2 failed, so we build the CSI pipeline
+        
+        # First try CSI camera with GStreamer pipeline (preferred for Jetson)
+        print(f"[INFO] Attempting CSI camera with GStreamer pipeline...")
         pipeline = _get_csi_pipeline(width, height, fps)
-        cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        try:
+            cap = cv2.VideoCapture(pipeline)
+            if cap.isOpened():
+                print(f"[INFO] Successfully opened CSI camera via GStreamer")
+                return cap
+            else:
+                print(f"[INFO] CSI camera not available via GStreamer")
+                cap.release()
+        except Exception as e:
+            print(f"[INFO] CSI camera failed: {e}")
+
+        # Fallback to USB camera
+        print(f"[INFO] Attempting USB camera at index {device_index}...")
+        try:
+            cap = cv2.VideoCapture(device_index)
+            if cap.isOpened():
+                print(f"[INFO] Successfully opened USB camera at index {device_index}")
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                if fps > 0:
+                    cap.set(cv2.CAP_PROP_FPS, fps)
+                return cap
+            else:
+                print(f"[INFO] USB camera at index {device_index} not available")
+                cap.release()
+        except Exception as e:
+            print(f"[INFO] USB camera failed: {e}")
+
     else:
         # Source is a path or a full GStreamer pipeline string
-        backend = cv2.CAP_GSTREAMER if use_gstreamer else cv2.CAP_ANY
-        cap = cv2.VideoCapture(source, backend)
+        print(f"[INFO] Attempting to open source: {source}")
+        try:
+            cap = cv2.VideoCapture(source)
+            if cap.isOpened():
+                print(f"[INFO] Successfully opened source: {source}")
+                return cap
+            else:
+                print(f"[INFO] Failed to open source: {source}")
+                cap.release()
+        except Exception as e:
+            print(f"[INFO] Source failed: {e}")
 
-
-    if not cap.isOpened():
-        raise RuntimeError(f"Unable to open video source: {source}")
+    raise RuntimeError(f"Unable to open video source: {source}")
 
     return cap
 

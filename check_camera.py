@@ -54,21 +54,29 @@ def test_camera_indices(max_indices=10):
     Tries to open cameras by index (0, 1, 2, ...) using the default backend.
     """
     print("=" * 60)
-    print(f"2. Testing camera indices from 0 to {max_indices-1} (V4L2/USB)...")
+    print(f"2. Testing camera indices from 0 to {max_indices-1} (USB/V4L2)...")
     print("-" * 60)
+    
+    # Check OpenCV version for compatibility
+    cv_version = cv2.__version__
+    print(f"  OpenCV version: {cv_version}")
+    
     found_cameras = []
     for i in range(max_indices):
-        cap = cv2.VideoCapture(i, cv2.CAP_V4L2)
-        if cap.isOpened():
-            width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-            height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-            print(f"  [SUCCESS] Found camera at index {i}")
-            print(f"    - Resolution: {int(width)}x{int(height)}")
-            found_cameras.append(i)
-            cap.release()
-        else:
-            # Print a dot for indices that don't exist to show progress
-            print(f".", end='', flush=True)
+        try:
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                print(f"  [SUCCESS] Found camera at index {i}")
+                print(f"    - Resolution: {int(width)}x{int(height)}")
+                found_cameras.append(i)
+                cap.release()
+            else:
+                # Print a dot for indices that don't exist to show progress
+                print(f".", end='', flush=True)
+        except Exception as e:
+            print(f"  [ERROR] Exception at index {i}: {e}")
     
     print("\n") # Newline after the progress dots
     if not found_cameras:
@@ -88,21 +96,26 @@ def test_csi_camera():
     print("  Using GStreamer pipeline:")
     print(f"  {pipeline}\n")
     
-    cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-    
-    if cap.isOpened():
-        print("  [SUCCESS] CSI Camera opened successfully via GStreamer.")
-        # Read a frame to get resolution
-        ret, frame = cap.read()
-        if ret and frame is not None:
-            height, width = frame.shape[:2]
-            print(f"    - Resolution: {width}x{height}")
+    try:
+        cap = cv2.VideoCapture(pipeline)
+        
+        if cap.isOpened():
+            print("  [SUCCESS] CSI Camera opened successfully via GStreamer.")
+            # Read a frame to get resolution
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                height, width = frame.shape[:2]
+                print(f"    - Resolution: {width}x{height}")
+            else:
+                print("    - NOTE: Camera opened but failed to capture a frame.")
+            cap.release()
+            return True
         else:
-            print("    - NOTE: Camera opened but failed to capture a frame.")
-        cap.release()
-        return True
-    else:
-        print("  [FAIL] Could not open CSI camera via GStreamer.\n")
+            print("  [FAIL] Could not open CSI camera via GStreamer.")
+            cap.release()
+            return False
+    except Exception as e:
+        print(f"  [ERROR] Exception while testing CSI camera: {e}")
         return False
 
 def main():
