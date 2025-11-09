@@ -424,25 +424,38 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
         try:
             cap = cv2.VideoCapture(pipeline)
             if cap.isOpened():
-                print(f"[INFO] Successfully opened CSI camera via GStreamer")
-                return cap
+                # Test if we can actually read a frame
+                ret, test_frame = cap.read()
+                if ret and test_frame is not None:
+                    print(f"[INFO] Successfully opened CSI camera via GStreamer")
+                    return cap
+                else:
+                    print(f"[INFO] CSI camera opened but cannot read frames")
+                    cap.release()
             else:
                 print(f"[INFO] CSI camera not available via GStreamer")
                 cap.release()
         except Exception as e:
             print(f"[INFO] CSI camera failed: {e}")
 
-        # Fallback to USB camera
+        # Fallback to USB camera with frame validation
         print(f"[INFO] Attempting USB camera at index {device_index}...")
         try:
             cap = cv2.VideoCapture(device_index)
             if cap.isOpened():
-                print(f"[INFO] Successfully opened USB camera at index {device_index}")
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
                 if fps > 0:
                     cap.set(cv2.CAP_PROP_FPS, fps)
-                return cap
+                
+                # Test if we can actually read a frame
+                ret, test_frame = cap.read()
+                if ret and test_frame is not None:
+                    print(f"[INFO] Successfully opened USB camera at index {device_index}")
+                    return cap
+                else:
+                    print(f"[INFO] USB camera opened but cannot read frames")
+                    cap.release()
             else:
                 print(f"[INFO] USB camera at index {device_index} not available")
                 cap.release()
