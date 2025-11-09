@@ -19,9 +19,9 @@ chmod +x setup_environment.sh
 ```
 The script will:
 1. Install Jetson-friendly APT packages (Python, OpenCV, GStreamer, build tools)
-2. Create/upgrade a virtual environment: `shipping/venv`
+2. Create a virtual environment **with system site-packages** (`python3 -m venv --system-site-packages venv`)
 3. Install Python packages from `requirements_simple.txt`
-4. Install `onnxruntime-gpu` (falls back to CPU if unavailable)
+4. Install `onnxruntime-gpu` when available (falls back to `onnxruntime` CPU)
 5. Run smoke tests (imports, model loading, `/dev/video0` capture)
 
 Manual steps (if you prefer full control):
@@ -33,7 +33,7 @@ sudo apt install python3-venv python3-pip python3-dev python3-opencv python3-num
                  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
 
 cd shipping
-python3 -m venv venv
+python3 -m venv --system-site-packages venv
 source venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install -r requirements_simple.txt
