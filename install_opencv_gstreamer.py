@@ -14,13 +14,17 @@ def run_command(cmd, capture_output=True, check=False):
     try:
         print(f"Running: {cmd}")
         if capture_output:
-            result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=check)
-            return result.returncode, result.stdout, result.stderr
+            result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=check)
+            stdout = result.stdout.decode('utf-8') if result.stdout else ""
+            stderr = result.stderr.decode('utf-8') if result.stderr else ""
+            return result.returncode, stdout, stderr
         else:
             result = subprocess.run(cmd, shell=True, check=check)
             return result.returncode, "", ""
     except subprocess.CalledProcessError as e:
-        return e.returncode, e.stdout if hasattr(e, 'stdout') else "", e.stderr if hasattr(e, 'stderr') else str(e)
+        stdout = e.stdout.decode('utf-8') if hasattr(e, 'stdout') and e.stdout else ""
+        stderr = e.stderr.decode('utf-8') if hasattr(e, 'stderr') and e.stderr else str(e)
+        return e.returncode, stdout, stderr
     except Exception as e:
         return 1, "", str(e)
 
