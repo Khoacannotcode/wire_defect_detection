@@ -51,6 +51,8 @@ sudo apt install -y \
     libjpeg-dev \
     zlib1g-dev \
     wget \
+    libprotobuf-dev \
+    protobuf-compiler \
     v4l-utils \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
