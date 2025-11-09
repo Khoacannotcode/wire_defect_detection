@@ -132,7 +132,7 @@ PYCODE
 
     case "$PYTHON_VERSION" in
         3.6)
-            DEFAULT_ONNXRUNTIME_GPU_WHEEL="https://developer.download.nvidia.com/compute/redist/jp/v46/onnxruntime/onnxruntime_gpu-1.10.0-cp36-cp36m-linux_aarch64.whl"
+            DEFAULT_ONNXRUNTIME_GPU_WHEEL="https://nvidia.box.com/shared/static/pmsqsiaw4pg9qrbeckcbymho6c01jj4z.whl"
             ;;
         3.8)
             DEFAULT_ONNXRUNTIME_GPU_WHEEL="https://developer.download.nvidia.com/compute/redist/jp/v502/onnxruntime/onnxruntime_gpu-1.12.1-cp38-cp38-linux_aarch64.whl"
