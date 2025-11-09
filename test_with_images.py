@@ -68,7 +68,7 @@ class SimpleWireDetector:
         providers.append('CPUExecutionProvider')
 
         self.session = ort.InferenceSession(
-            model_path,
+            str(model_path),
             sess_options=sess_options,
             providers=providers
         )

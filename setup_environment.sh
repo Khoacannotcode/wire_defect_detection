@@ -178,38 +178,49 @@ if "CUDAExecutionProvider" not in providers:
 print(f"  onnxruntime GPU providers: {providers}")
 PYCODE
 
-print_section "4/4" "Downgrading ONNX model if needed"
+print_section "4/4" "Checking and Downgrading ONNX model"
 python - <<'PYCODE'
 import onnx
+import onnxruntime as ort
 import os
 import sys
 
 model_path = os.path.join('models', 'best_cropped.onnx')
 if not os.path.isfile(model_path):
-    print(f"  Model file not found at {model_path}, skipping opset check.")
+    print(f"  Model file not found at {model_path}, skipping.")
     sys.exit(0)
 
+TARGET_OPSET = 16
+model_loaded = False
+model_to_test = model_path
+
 try:
-    print(f"  Checking ONNX model opset version for {model_path}...")
+    print(f"  Checking ONNX model: {model_path}")
     model = onnx.load(model_path)
-    # The first opset import is usually the ai.onnx domain
     opset_version = model.opset_import[0].version
     print(f"  Detected opset version: {opset_version}")
 
-    TARGET_OPSET = 16
     if opset_version > TARGET_OPSET:
         print(f"  Opset version > {TARGET_OPSET}. Downgrading model...")
         model_downgraded = onnx.version_converter.convert_version(model, TARGET_OPSET)
         onnx.save(model_downgraded, model_path)
-        print(f"  Model successfully downgraded to opset {TARGET_OPSET}.")
+        print(f"  Model successfully downgraded to opset {TARGET_OPSET} and saved.")
     else:
         print(f"  Opset version is compatible, no changes needed.")
 
+    # Now, try to load the (potentially downgraded) model with ONNX Runtime
+    print("\n  Validating model with ONNX Runtime...")
+    session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
+    print("  [SUCCESS] Model loads successfully with ONNX Runtime.")
+    model_loaded = True
+
 except Exception as e:
-    print(f"  An error occurred during ONNX opset check/conversion: {e}")
-    print("  Please check the model file or the onnx installation.")
-    # Exiting with 0 to not fail the whole script if model conversion fails
-    sys.exit(0)
+    print(f"  [ERROR] An error occurred: {e}")
+    # Don't exit with error, just report and continue
+    
+if not model_loaded:
+    print("\n  [WARNING] Model validation failed. The application might not run correctly.")
+
 PYCODE
 
 print_section "5/4" "Running validation checks"
@@ -227,11 +238,9 @@ except Exception as exc:
 
 model_path = os.path.join('models', 'best_cropped.onnx')
 if os.path.isfile(model_path):
-    try:
-        session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
-        print("  Model loads successfully")
-    except Exception as exc:
-        print(f"  Model loading failed: {exc}")
+    # This check is now redundant but kept for consistency
+    # The real test happened in the previous step.
+    print("  Model availability checked.")
 else:
     print(f"  Model file missing: {model_path}")
 
