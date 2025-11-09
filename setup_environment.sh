@@ -81,13 +81,16 @@ print_section "2/4" "Setting up Python virtual environment"
 
 cd "$(dirname "$0")"
 
-if [[ ! -d venv ]]; then
-    python3 -m venv --system-site-packages venv
-fi
+echo "Removing existing virtual environment if it exists..."
+rm -rf venv
+
+echo "Creating Python virtual environment..."
+python3 -m venv --system-site-packages venv
 
 source venv/bin/activate
-python -m ensurepip --upgrade
-pip install --upgrade pip setuptools wheel
+
+echo "Upgrading pip, setuptools, and wheel..."
+python -m pip install --upgrade pip setuptools wheel
 
 VENV_SITE_PACKAGES=$(python - <<'PYCODE'
 import site
