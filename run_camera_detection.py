@@ -33,107 +33,122 @@ except ImportError:
 ROOT_DIR = Path(__file__).resolve().parent
 MODELS_DIR = ROOT_DIR / "models"
 
-class ExternalGStreamerCapture:
-    """External GStreamer process capture for OpenCV without GStreamer support"""
+class UDPGStreamerCapture:
+    """UDP-based GStreamer capture for OpenCV without GStreamer support"""
     
-    def __init__(self, pipeline, width=1280, height=720):
-        self.pipeline = pipeline
+    def __init__(self, width=1280, height=720, fps=30):
         self.width = width
         self.height = height
-        self.process = None
-        self.temp_file = None
+        self.fps = fps
+        self.gst_process = None
+        self.opencv_cap = None
         self.is_opened = False
+        self.udp_port = 5000
         
     def open(self):
-        """Start external GStreamer process"""
+        """Start UDP GStreamer server and OpenCV UDP client"""
         try:
-            # Create temporary named pipe
-            self.temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.raw')
-            temp_path = self.temp_file.name
-            self.temp_file.close()
-            
-            # Create GStreamer command that outputs raw video to file
-            gst_cmd = [
+            # Create GStreamer UDP server command using the working pipeline components
+            gst_server_cmd = [
                 'gst-launch-1.0',
                 'nvarguscamerasrc',
-                '!', f'video/x-raw(memory:NVMM), width={self.width}, height={self.height}, format=NV12, framerate=30/1',
+                '!', f'video/x-raw(memory:NVMM), width={self.width}, height={self.height}, format=NV12, framerate={self.fps}/1',
                 '!', 'nvvidconv',
                 '!', 'video/x-raw, format=BGR',
                 '!', 'videoconvert',
-                '!', f'filesink location={temp_path}'
+                '!', 'x264enc tune=zerolatency bitrate=2000 speed-preset=superfast',
+                '!', 'rtph264pay',
+                '!', f'udpsink host=127.0.0.1 port={self.udp_port}'
             ]
             
-            print(f"[INFO] Starting external GStreamer: {' '.join(gst_cmd)}")
+            print(f"[INFO] Starting UDP GStreamer server: {' '.join(gst_server_cmd)}")
             
-            # Start GStreamer process
-            self.process = subprocess.Popen(
-                gst_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=0
+            # Start GStreamer UDP server process
+            self.gst_process = subprocess.Popen(
+                gst_server_cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE
             )
             
-            # Give it time to start
-            time.sleep(2)
+            # Give GStreamer time to start
+            time.sleep(3)
             
-            # Check if process is still running
-            if self.process.poll() is None:
-                self.is_opened = True
-                print("[INFO] External GStreamer process started successfully")
-                return True
-            else:
-                print("[ERROR] External GStreamer process failed to start")
+            # Check if GStreamer process is still running
+            if self.gst_process.poll() is not None:
+                print("[ERROR] GStreamer UDP server failed to start")
                 return False
+            
+            # Try to connect OpenCV to UDP stream (if GStreamer support exists)
+            udp_pipeline = f"udpsrc port={self.udp_port} ! application/x-rtp,encoding-name=H264,payload=96 ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! appsink"
+            
+            print(f"[INFO] Connecting OpenCV to UDP stream...")
+            self.opencv_cap = cv2.VideoCapture(udp_pipeline)
+            
+            if self.opencv_cap and self.opencv_cap.isOpened():
+                # Test if we can read a frame
+                time.sleep(2)  # Give more time for connection
+                ret, test_frame = self.opencv_cap.read()
+                if ret and test_frame is not None:
+                    print(f"[INFO] UDP streaming working! Frame size: {test_frame.shape[1]}x{test_frame.shape[0]}")
+                    self.is_opened = True
+                    return True
+                else:
+                    print("[INFO] UDP stream connected but no frames received")
+            else:
+                print("[INFO] OpenCV cannot connect to UDP stream (expected without GStreamer support)")
+            
+            # If OpenCV connection fails, we still keep GStreamer running for potential manual testing
+            print("[INFO] GStreamer UDP server is running on port 5000")
+            print("[INFO] You can test with: gst-launch-1.0 udpsrc port=5000 ! application/x-rtp,encoding-name=H264,payload=96 ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! xvimagesink")
+            
+            return False
                 
         except Exception as e:
-            print(f"[ERROR] Failed to start external GStreamer: {e}")
+            print(f"[ERROR] Failed to start UDP GStreamer: {e}")
             return False
     
     def isOpened(self):
-        return self.is_opened and (self.process is not None) and (self.process.poll() is None)
+        return self.is_opened and (self.opencv_cap is not None) and self.opencv_cap.isOpened()
     
     def read(self):
-        """Read frame from GStreamer process"""
+        """Read frame from UDP stream"""
         if not self.isOpened():
             return False, None
             
         try:
-            # This is a simplified approach - in practice, we'd need more sophisticated
-            # frame reading from the GStreamer output
-            # For now, return a dummy frame to test the concept
-            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-            return True, frame
+            return self.opencv_cap.read()
         except Exception as e:
-            print(f"[ERROR] Failed to read from external GStreamer: {e}")
+            print(f"[ERROR] Failed to read from UDP stream: {e}")
             return False, None
     
     def release(self):
-        """Stop external GStreamer process"""
-        if self.process:
+        """Stop UDP GStreamer server and OpenCV client"""
+        if self.opencv_cap:
             try:
-                self.process.terminate()
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
+                self.opencv_cap.release()
             except:
                 pass
-            self.process = None
+            self.opencv_cap = None
         
-        if self.temp_file:
+        if self.gst_process:
             try:
-                os.unlink(self.temp_file.name)
+                self.gst_process.terminate()
+                self.gst_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.gst_process.kill()
             except:
                 pass
-            self.temp_file = None
+            self.gst_process = None
         
         self.is_opened = False
 
 def setup_v4l2_loopback(width=1280, height=720, fps=30):
     """Setup V4L2 loopback device for CSI camera access"""
     try:
-        # Check if v4l2loopback module is loaded
-        result = subprocess.run(['lsmod'], capture_output=True, text=True)
-        if 'v4l2loopback' not in result.stdout:
+        # Check if v4l2loopback module is loaded (Python 3.5+ compatible)
+        result = subprocess.run(['lsmod'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        output = result.stdout.decode('utf-8') if result.stdout else ""
+        if 'v4l2loopback' not in output:
             print("[INFO] Loading v4l2loopback kernel module...")
             subprocess.run(['sudo', 'modprobe', 'v4l2loopback'], check=True)
         
@@ -551,30 +566,33 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
     """Create a cv2.VideoCapture for USB/CSI cameras or files."""
 
     def _get_csi_pipeline(capture_width, capture_height, framerate):
-        """Generate GStreamer pipeline variants for different OpenCV versions"""
-        # Simple pipeline for OpenCV 3.2.0 compatibility
-        simple_pipeline = (
+        """Generate simple working GStreamer pipeline based on user's confirmed working command"""
+        # User confirmed working: gst-launch-1.0 nvarguscamerasrc ! nvvidconv ! xvimagesink
+        # We just replace xvimagesink with appsink for OpenCV
+        
+        # Primary pipeline - exactly like user's working command but with appsink
+        working_pipeline = "nvarguscamerasrc ! nvvidconv ! appsink"
+        
+        # Alternative with basic format specification
+        basic_pipeline = (
+            f"nvarguscamerasrc ! "
+            f"video/x-raw(memory:NVMM), width={capture_width}, height={capture_height}, "
+            f"format=NV12, framerate={framerate}/1 ! "
+            f"nvvidconv ! appsink"
+        )
+        
+        # Most detailed pipeline (if system OpenCV supports it)
+        detailed_pipeline = (
             f"nvarguscamerasrc ! "
             f"video/x-raw(memory:NVMM), width={capture_width}, height={capture_height}, "
             f"format=NV12, framerate={framerate}/1 ! "
             f"nvvidconv ! "
             f"video/x-raw, format=BGRx ! "
             f"videoconvert ! "
-            f"appsink"
+            f"video/x-raw, format=BGR ! appsink"
         )
         
-        # Even simpler pipeline for older OpenCV
-        basic_pipeline = (
-            f"nvarguscamerasrc ! "
-            f"nvvidconv ! "
-            f"video/x-raw, format=BGR ! "
-            f"appsink"
-        )
-        
-        # Most basic pipeline
-        minimal_pipeline = "nvarguscamerasrc ! nvvidconv ! appsink"
-        
-        return [simple_pipeline, basic_pipeline, minimal_pipeline]
+        return [working_pipeline, basic_pipeline, detailed_pipeline]
 
     def _is_int(value: str) -> bool:
         try:
@@ -587,8 +605,55 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
     cv_version = cv2.__version__
     print(f"[INFO] OpenCV version: {cv_version}")
     
-    # Check if OpenCV was compiled with GStreamer support
-    def check_gstreamer_support():
+    # Check OpenCV source and GStreamer support
+    def check_opencv_source():
+        """Check if using system OpenCV vs pip OpenCV and GStreamer support"""
+        print("[INFO] Checking OpenCV installation source...")
+        
+        # Get OpenCV file location
+        opencv_path = cv2.__file__
+        print(f"[INFO] OpenCV loaded from: {opencv_path}")
+        
+        # Check if it's system OpenCV or pip OpenCV
+        if '/usr/lib/python3/dist-packages' in opencv_path:
+            print("[INFO] Using SYSTEM OpenCV (Good - likely has GStreamer support)")
+            is_system_opencv = True
+        elif 'site-packages' in opencv_path:
+            print("[WARN] Using PIP OpenCV (May lack GStreamer support)")
+            is_system_opencv = False
+        else:
+            print("[INFO] OpenCV source unclear")
+            is_system_opencv = False
+        
+        # Get detailed build information
+        try:
+            build_info = cv2.getBuildInformation()
+            
+            # Check for GStreamer in build info
+            if 'GStreamer:' in build_info:
+                gstreamer_line = [line for line in build_info.split('\n') if 'GStreamer:' in line]
+                if gstreamer_line:
+                    print(f"[INFO] {gstreamer_line[0].strip()}")
+                    has_gstreamer = 'YES' in gstreamer_line[0]
+                else:
+                    has_gstreamer = False
+            else:
+                has_gstreamer = False
+                
+            # Also check for NVIDIA-specific components
+            if 'CUDA:' in build_info:
+                cuda_line = [line for line in build_info.split('\n') if 'CUDA:' in line]
+                if cuda_line:
+                    print(f"[INFO] {cuda_line[0].strip()}")
+                    
+        except Exception as e:
+            print(f"[WARN] Could not get build information: {e}")
+            has_gstreamer = False
+        
+        return is_system_opencv, has_gstreamer
+    
+    # Test GStreamer support practically
+    def test_gstreamer_support():
         try:
             # Try to create a simple GStreamer pipeline to test support
             test_pipeline = "videotestsrc num-buffers=1 ! appsink"
@@ -599,12 +664,66 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
         except:
             return False
     
-    has_gstreamer = check_gstreamer_support()
-    print(f"[INFO] OpenCV GStreamer support: {'Yes' if has_gstreamer else 'No'}")
+    is_system_opencv, has_gstreamer_build = check_opencv_source()
+    has_gstreamer_test = test_gstreamer_support()
+    
+    print(f"[INFO] GStreamer in build info: {'Yes' if has_gstreamer_build else 'No'}")
+    print(f"[INFO] GStreamer test result: {'Yes' if has_gstreamer_test else 'No'}")
+    
+    has_gstreamer = has_gstreamer_build and has_gstreamer_test
     
     if not has_gstreamer:
-        print("[WARN] OpenCV was compiled without GStreamer support!")
-        print("[WARN] Will attempt external GStreamer process workaround...")
+        if not is_system_opencv:
+            print("[CRITICAL] Using pip OpenCV without GStreamer support!")
+            print("[SOLUTION] Need to use system OpenCV with GStreamer support")
+            print()
+            print("=" * 60)
+            print("🔧 OPENCV FIX REQUIRED")
+            print("=" * 60)
+            print("To fix OpenCV and enable CSI camera support:")
+            print()
+            print("1. Remove pip-installed OpenCV:")
+            print("   pip uninstall opencv-python opencv-contrib-python opencv-python-headless")
+            print()
+            print("2. Ensure system OpenCV is available:")
+            print("   sudo apt update")
+            print("   sudo apt install python3-opencv")
+            print()
+            print("3. Verify system OpenCV path is in venv:")
+            print("   Check if venv/lib/python3.x/site-packages/opencv-system.pth exists")
+            print("   Content should be: /usr/lib/python3/dist-packages")
+            print()
+            print("4. Restart the script after fixing")
+            print("=" * 60)
+            print()
+            
+            # Try to provide automatic fix
+            try:
+                import site
+                venv_site_packages = site.getsitepackages()[0] if site.getsitepackages() else None
+                if venv_site_packages:
+                    pth_file = os.path.join(venv_site_packages, "opencv-system.pth")
+                    system_opencv_path = "/usr/lib/python3/dist-packages"
+                    
+                    if not os.path.exists(pth_file):
+                        print(f"[INFO] Creating opencv-system.pth file: {pth_file}")
+                        try:
+                            with open(pth_file, 'w') as f:
+                                f.write(system_opencv_path + '\n')
+                            print("[INFO] Created opencv-system.pth - please restart the script")
+                        except Exception as e:
+                            print(f"[WARN] Could not create pth file: {e}")
+                    else:
+                        print(f"[INFO] opencv-system.pth already exists: {pth_file}")
+                        
+            except Exception as e:
+                print(f"[WARN] Could not auto-fix OpenCV path: {e}")
+                
+        else:
+            print("[WARN] System OpenCV found but GStreamer test failed!")
+            print("[SOLUTION] May need to reinstall GStreamer packages")
+            print()
+            print("Try: sudo apt install gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good")
 
     # For Jetson with CSI camera, prioritize GStreamer pipeline
     if _is_int(source):
@@ -616,7 +735,7 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
             pipelines = _get_csi_pipeline(width, height, fps)
             
             for i, pipeline in enumerate(pipelines):
-                pipeline_name = ["Simple", "Basic", "Minimal"][i]
+                pipeline_name = ["Working (Simple)", "Basic (With Format)", "Detailed (Full)"][i]
                 print(f"[INFO] Trying {pipeline_name} pipeline: {pipeline}")
                 
                 try:
@@ -626,8 +745,9 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
                         # Test if we can actually read a frame
                         ret, test_frame = cap.read()
                         if ret and test_frame is not None:
-                            print(f"[INFO] Successfully opened CSI camera via {pipeline_name} GStreamer pipeline")
+                            print(f"[INFO] ✅ SUCCESS! CSI camera working via {pipeline_name} pipeline")
                             print(f"[INFO] Frame size: {test_frame.shape[1]}x{test_frame.shape[0]}")
+                            print(f"[INFO] This matches your working gst-launch command!")
                             return cap
                         else:
                             print(f"[INFO] {pipeline_name} pipeline opened but cannot read frames")
@@ -677,17 +797,20 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
             except Exception as e:
                 print(f"[INFO] V4L2 loopback failed: {e}")
             
-            # Fallback to external GStreamer process
-            print(f"[INFO] Attempting external GStreamer process for CSI camera...")
+            # Fallback to UDP GStreamer streaming
+            print(f"[INFO] Attempting UDP GStreamer streaming for CSI camera...")
             try:
-                external_cap = ExternalGStreamerCapture("", width, height)
-                if external_cap.open():
-                    print(f"[INFO] Successfully opened CSI camera via external GStreamer process")
-                    return external_cap
+                udp_cap = UDPGStreamerCapture(width, height, fps)
+                if udp_cap.open():
+                    print(f"[INFO] Successfully opened CSI camera via UDP GStreamer streaming")
+                    return udp_cap
                 else:
-                    print(f"[INFO] External GStreamer process failed")
+                    print(f"[INFO] UDP GStreamer streaming setup completed but OpenCV connection failed")
+                    print(f"[INFO] This is expected with OpenCV 3.2.0 without GStreamer support")
+                    # Keep the process running for manual testing
+                    return udp_cap  # Return it anyway so user can test manually
             except Exception as e:
-                print(f"[INFO] External GStreamer process failed: {e}")
+                print(f"[INFO] UDP GStreamer streaming failed: {e}")
 
         # Fallback to USB camera with frame validation
         print(f"[INFO] Attempting USB camera at index {device_index}...")
@@ -757,6 +880,11 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
     print("   - Install v4l2loopback: sudo apt install v4l2loopback-dkms")
     print("   - Try USB camera as temporary solution")
     print("   - Use external video capture software")
+    print()
+    print("6. MANUAL TESTING (if UDP server started):")
+    print("   - Test UDP stream: gst-launch-1.0 udpsrc port=5000 ! application/x-rtp,encoding-name=H264,payload=96 ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert ! xvimagesink")
+    print("   - Check if port 5000 is active: netstat -an | grep 5000")
+    print("   - Kill any remaining processes: pkill -f gst-launch")
     print("="*60)
 
     raise RuntimeError(f"Unable to open video source: {source}")
