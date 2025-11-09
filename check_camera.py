@@ -36,7 +36,8 @@ def check_v4l2_devices():
     try:
         result = subprocess.run(
             ['v4l2-ctl', '--list-devices'],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             check=True
         )
