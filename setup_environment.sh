@@ -50,6 +50,7 @@ sudo apt install -y \
     liblapack-dev \
     libjpeg-dev \
     zlib1g-dev \
+    wget \
     v4l-utils \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
@@ -133,6 +134,7 @@ PYCODE
     case "$PYTHON_VERSION" in
         3.6)
             DEFAULT_ONNXRUNTIME_GPU_WHEEL="https://nvidia.box.com/shared/static/pmsqsiaw4pg9qrbeckcbymho6c01jj4z.whl"
+            ONNXRUNTIME_FILENAME="onnxruntime_gpu-1.11.0-cp36-cp36m-linux_aarch64.whl"
             ;;
         3.8)
             DEFAULT_ONNXRUNTIME_GPU_WHEEL="https://developer.download.nvidia.com/compute/redist/jp/v502/onnxruntime/onnxruntime_gpu-1.12.1-cp38-cp38-linux_aarch64.whl"
@@ -154,8 +156,16 @@ PYCODE
         exit 1
     fi
 
-    echo "Installing onnxruntime-gpu from $ONNXRUNTIME_GPU_WHEEL"
-    python -m pip install --no-cache-dir "$ONNXRUNTIME_GPU_WHEEL"
+    if [[ -n "$ONNXRUNTIME_FILENAME" ]]; then
+        echo "Downloading onnxruntime-gpu from $ONNXRUNTIME_GPU_WHEEL"
+        wget -q --show-progress -O "$ONNXRUNTIME_FILENAME" "$ONNXRUNTIME_GPU_WHEEL"
+        echo "Installing onnxruntime-gpu from local file $ONNXRUNTIME_FILENAME"
+        python -m pip install --no-cache-dir "$ONNXRUNTIME_FILENAME"
+        rm "$ONNXRUNTIME_FILENAME"
+    else
+        echo "Installing onnxruntime-gpu from $ONNXRUNTIME_GPU_WHEEL"
+        python -m pip install --no-cache-dir "$ONNXRUNTIME_GPU_WHEEL"
+    fi
 fi
 
 python - <<'PYCODE'
