@@ -72,6 +72,12 @@ python run_camera_detection.py \
   --display
 ```
 
+**ROI geometry & overlay**
+- Each frame is cropped to a central 80 px band (vertical) and the central 60 % of the width (final ROI ≈ 768×80). The outline is drawn on the live view and on saved test images so you can verify alignment; detections are clipped to stay inside this region.
+
+**Camera tuning (Jetson CSI)**
+- When GStreamer is used (either via OpenCV or the PyGObject fallback), `nvarguscamerasrc` is configured with `exposuretimerange≈200` and `gainrange≈2.0`. If the driver rejects these values, a warning is printed and the capture continues with default settings.
+
 ### 4.3 When OpenCV reports `GStreamer: NO`
 JetPack 4.x ships with the legacy OpenCV 3.2.0 build which is **compiled without GStreamer bindings**.  
 Symptoms inside `run_camera_detection.py`:

@@ -17,6 +17,13 @@ import tempfile
 from collections import deque
 from pathlib import Path
 
+CAMERA_EXPOSURE_TIME = 200  # units as expected by nvarguscamerasrc (typically microseconds)
+CAMERA_ANALOG_GAIN = 2.0
+CAMERA_PROPERTY_STRING = (
+    f'exposuretimerange="{CAMERA_EXPOSURE_TIME} {CAMERA_EXPOSURE_TIME}" '
+    f'gainrange="{CAMERA_ANALOG_GAIN} {CAMERA_ANALOG_GAIN}"'
+)
+
 # Optional PyGObject / GStreamer bindings
 GST_AVAILABLE = False
 try:
@@ -58,6 +65,8 @@ class UDPGStreamerCapture:
         self.opencv_cap = None
         self.is_opened = False
         self.udp_port = 5000
+        self.exposure_time = CAMERA_EXPOSURE_TIME
+        self.analog_gain = CAMERA_ANALOG_GAIN
         
     def open(self):
         """Start UDP GStreamer server and OpenCV UDP client"""
@@ -65,7 +74,7 @@ class UDPGStreamerCapture:
             # Create GStreamer UDP server command using the working pipeline components
             gst_server_cmd = [
                 'gst-launch-1.0',
-                'nvarguscamerasrc',
+                f'nvarguscamerasrc {CAMERA_PROPERTY_STRING}',
                 '!', f'video/x-raw(memory:NVMM), width={self.width}, height={self.height}, format=NV12, framerate={self.fps}/1',
                 '!', 'nvvidconv',
                 '!', 'video/x-raw, format=BGR',
@@ -171,7 +180,7 @@ class GStreamerCSICapture:
 
     def _build_pipeline(self):
         return (
-            "nvarguscamerasrc ! "
+            f"nvarguscamerasrc name=camerasrc {CAMERA_PROPERTY_STRING} ! "
             f"video/x-raw(memory:NVMM), width={self.width}, height={self.height}, format=NV12, framerate={self.fps}/1 ! "
             "nvvidconv ! "
             "video/x-raw, format=BGRx ! "
@@ -196,6 +205,33 @@ class GStreamerCSICapture:
                 print("[ERROR] GStreamer pipeline missing appsink element")
                 self.release()
                 return False
+
+            source = self.pipeline.get_by_name("camerasrc")
+            if source:
+                exposure_applied = False
+                gain_applied = False
+                try:
+                    source.set_property("exposuretimerange", (CAMERA_EXPOSURE_TIME, CAMERA_EXPOSURE_TIME))
+                    exposure_applied = True
+                except Exception:
+                    try:
+                        source.set_property("exposuretimerange", f"{CAMERA_EXPOSURE_TIME} {CAMERA_EXPOSURE_TIME}")
+                        exposure_applied = True
+                    except Exception as prop_exc:
+                        print(f"[WARN] Unable to set exposure via PyGObject: {prop_exc}")
+
+                try:
+                    source.set_property("gainrange", (CAMERA_ANALOG_GAIN, CAMERA_ANALOG_GAIN))
+                    gain_applied = True
+                except Exception:
+                    try:
+                        source.set_property("gainrange", f"{CAMERA_ANALOG_GAIN} {CAMERA_ANALOG_GAIN}")
+                        gain_applied = True
+                    except Exception as prop_exc:
+                        print(f"[WARN] Unable to set gain via PyGObject: {prop_exc}")
+
+                if exposure_applied and gain_applied:
+                    print(f"[INFO] Applied camera properties: exposure={CAMERA_EXPOSURE_TIME}, gain={CAMERA_ANALOG_GAIN}")
 
             self.appsink.set_property("emit-signals", False)
             self.appsink.set_property("max-buffers", 1)
@@ -298,7 +334,7 @@ def setup_v4l2_loopback(width=1280, height=720, fps=30):
         # Create GStreamer pipeline that outputs to V4L2 loopback device
         gst_cmd = [
             'gst-launch-1.0',
-            'nvarguscamerasrc',
+            f'nvarguscamerasrc {CAMERA_PROPERTY_STRING}',
             '!', f'video/x-raw(memory:NVMM), width={width}, height={height}, format=NV12, framerate={fps}/1',
             '!', 'nvvidconv',
             '!', 'video/x-raw, format=BGR',
@@ -380,7 +416,9 @@ class LiveWireDetector:
         # Settings
         self.input_size = 416
         self.crop_height = 80
+        self.crop_width_ratio = 0.6
         self.conf_threshold = 0.22
+        self.roi_color = (0, 255, 255)
 
         # Class info / colors
         self.class_names = ['fail', 'pagan', 'valid']
@@ -397,12 +435,31 @@ class LiveWireDetector:
         print("✅ Detector ready")
     
     def crop_to_roi(self, frame):
-        """Crop frame to the central horizontal band used during training."""
+        """Crop frame to the central ROI (vertical band + side trim) used during training."""
         h, w = frame.shape[:2]
+
+        # Vertical crop (keep center band)
         crop_height = min(self.crop_height, h)
         start_y = max((h - crop_height) // 2, 0)
         end_y = start_y + crop_height
-        return frame[start_y:end_y, :], start_y
+        vertical_cropped = frame[start_y:end_y, :]
+
+        # Horizontal crop (keep center width portion)
+        crop_width = int(vertical_cropped.shape[1] * self.crop_width_ratio)
+        crop_width = max(1, min(crop_width, vertical_cropped.shape[1]))
+        start_x = max((vertical_cropped.shape[1] - crop_width) // 2, 0)
+        end_x = start_x + crop_width
+
+        roi = vertical_cropped[:, start_x:end_x]
+
+        roi_info = {
+            "top": start_y,
+            "left": start_x,
+            "height": roi.shape[0],
+            "width": roi.shape[1],
+        }
+
+        return roi, roi_info
 
     def letterbox(self, image, new_shape=416, color=(114, 114, 114)):
         shape = image.shape[:2]
@@ -457,17 +514,38 @@ class LiveWireDetector:
 
         return [x1, y1, x2, y2]
 
-    def shift_bbox_to_original(self, bbox, original_shape, crop_start_y):
+    def clip_bbox_to_roi(self, bbox, roi):
+        """Clip bbox (ROI coordinates) so it stays within ROI bounds."""
+        x1, y1, x2, y2 = bbox
+        x1 = max(0.0, min(x1, roi["width"]))
+        x2 = max(0.0, min(x2, roi["width"]))
+        y1 = max(0.0, min(y1, roi["height"]))
+        y2 = max(0.0, min(y2, roi["height"]))
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return [x1, y1, x2, y2]
+
+    def shift_bbox_to_original(self, bbox, original_shape, roi):
         x1, y1, x2, y2 = bbox
 
         width = original_shape[1]
         height = original_shape[0]
 
-        x1 = max(0, min(int(round(x1)), width))
-        x2 = max(0, min(int(round(x2)), width))
+        roi_left = roi["left"]
+        roi_top = roi["top"]
+        roi_right = roi_left + roi["width"]
+        roi_bottom = roi_top + roi["height"]
 
-        y1 = max(0, min(int(round(y1 + crop_start_y)), height))
-        y2 = max(0, min(int(round(y2 + crop_start_y)), height))
+        x1 = int(round(x1 + roi_left))
+        x2 = int(round(x2 + roi_left))
+        y1 = int(round(y1 + roi_top))
+        y2 = int(round(y2 + roi_top))
+
+        x1 = max(roi_left, min(x1, roi_right))
+        x2 = max(roi_left, min(x2, roi_right))
+        y1 = max(roi_top, min(y1, roi_bottom))
+        y2 = max(roi_top, min(y2, roi_bottom))
 
         if x2 <= x1 or y2 <= y1:
             return None
@@ -523,8 +601,34 @@ class LiveWireDetector:
         iou = intersection / union if union > 0 else 0.0
         return iou
 
-    def draw_detections(self, frame, detections):
-        """Draw bounding boxes and labels on frame"""
+    def draw_roi(self, frame, roi):
+        """Draw ROI rectangle on frame."""
+        if not roi:
+            return frame
+
+        top = roi["top"]
+        left = roi["left"]
+        bottom = top + roi["height"]
+        right = left + roi["width"]
+
+        cv2.rectangle(frame, (left, top), (right, bottom), self.roi_color, 1, lineType=cv2.LINE_AA)
+        cv2.putText(
+            frame,
+            "ROI",
+            (left + 8, max(15, top - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            self.roi_color,
+            1,
+        )
+        return frame
+
+    def draw_detections(self, frame, detections, roi=None):
+        """Draw ROI outline plus bounding boxes and labels on frame."""
+        annotated = frame
+        if roi:
+            annotated = self.draw_roi(annotated, roi)
+
         for detection in detections:
             bbox = detection['bbox']
             class_name = detection['class_name']
@@ -533,21 +637,21 @@ class LiveWireDetector:
             color = self.colors.get(class_name, (128, 128, 128))
             
             # Draw bounding box
-            cv2.rectangle(frame, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
+            cv2.rectangle(annotated, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
             
             # Draw label
             label = f"{class_name}: {confidence:.2f}"
             label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
             
             # Background for label
-            cv2.rectangle(frame, (bbox[0], bbox[1] - label_size[1] - 10), 
+            cv2.rectangle(annotated, (bbox[0], bbox[1] - label_size[1] - 10), 
                          (bbox[0] + label_size[0], bbox[1]), color, -1)
             
             # Label text
-            cv2.putText(frame, label, (bbox[0], bbox[1] - 5), 
+            cv2.putText(annotated, label, (bbox[0], bbox[1] - 5), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
-        return frame
+        return annotated
     
     def preprocess(self, frame):
         img, ratio, dwdh = self.letterbox(frame, new_shape=self.input_size)
@@ -566,7 +670,7 @@ class LiveWireDetector:
         original_frame = frame.copy()
         
         # Crop to ROI
-        cropped_frame, crop_start_y = self.crop_to_roi(frame)
+        cropped_frame, roi = self.crop_to_roi(frame)
         
         # Preprocess
         input_data, ratio, dwdh = self.preprocess(cropped_frame)
@@ -578,11 +682,11 @@ class LiveWireDetector:
 
         scaled_detections = []
         for det in detections:
-            scaled_bbox = self.shift_bbox_to_original(
-                det['bbox'],
-                original_frame.shape,
-                crop_start_y
-            )
+            clipped = self.clip_bbox_to_roi(det['bbox'], roi)
+            if clipped is None:
+                continue
+
+            scaled_bbox = self.shift_bbox_to_original(clipped, original_frame.shape, roi)
 
             if scaled_bbox is None:
                 continue
@@ -594,7 +698,7 @@ class LiveWireDetector:
                 'confidence': det['confidence']
             })
 
-        annotated_frame = self.draw_detections(original_frame, scaled_detections)
+        annotated_frame = self.draw_detections(original_frame, scaled_detections, roi=roi)
 
         processing_time = time.time() - start_time
         return annotated_frame, scaled_detections, processing_time
@@ -697,13 +801,14 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
         """Generate simple working GStreamer pipeline based on user's confirmed working command"""
         # User confirmed working: gst-launch-1.0 nvarguscamerasrc ! nvvidconv ! xvimagesink
         # We just replace xvimagesink with appsink for OpenCV
-        
+        source_block = f"nvarguscamerasrc {CAMERA_PROPERTY_STRING}"
+
         # Primary pipeline - exactly like user's working command but with appsink
-        working_pipeline = "nvarguscamerasrc ! nvvidconv ! appsink"
+        working_pipeline = f"{source_block} ! nvvidconv ! appsink"
         
         # Alternative with basic format specification
         basic_pipeline = (
-            f"nvarguscamerasrc ! "
+            f"{source_block} ! "
             f"video/x-raw(memory:NVMM), width={capture_width}, height={capture_height}, "
             f"format=NV12, framerate={framerate}/1 ! "
             f"nvvidconv ! appsink"
@@ -711,7 +816,7 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
         
         # Most detailed pipeline (if system OpenCV supports it)
         detailed_pipeline = (
-            f"nvarguscamerasrc ! "
+            f"{source_block} ! "
             f"video/x-raw(memory:NVMM), width={capture_width}, height={capture_height}, "
             f"format=NV12, framerate={framerate}/1 ! "
             f"nvvidconv ! "
@@ -732,6 +837,8 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
     # Check OpenCV version and GStreamer support
     cv_version = cv2.__version__
     print(f"[INFO] OpenCV version: {cv_version}")
+    print(f"[INFO] Desired ROI: center 80px high × {int(width * 0.6)}px wide (overlay enabled)")
+    print(f"[INFO] Requested camera properties: exposure={CAMERA_EXPOSURE_TIME}, gain={CAMERA_ANALOG_GAIN}")
     
     # Check OpenCV source and GStreamer support
     def check_opencv_source():

@@ -79,7 +79,9 @@ class SimpleWireDetector:
         # Model settings
         self.input_size = 416
         self.crop_height = 80
+        self.crop_width_ratio = 0.6
         self.conf_threshold = 0.22  # Fine-tuned threshold to get closer to 19 detections
+        self.roi_color = (0, 255, 255)
         
         # Class info
         self.class_names = ['fail', 'pagan', 'valid']
@@ -92,12 +94,26 @@ class SimpleWireDetector:
         print("[OK] Model loaded successfully")
     
     def crop_to_roi(self, image):
-        """Crop image to the central horizontal band used during training."""
+        """Crop image to central ROI (vertical band + side trim) used during training."""
         h, w = image.shape[:2]
         crop_height = min(self.crop_height, h)
         start_y = max((h - crop_height) // 2, 0)
         end_y = start_y + crop_height
-        return image[start_y:end_y, :], start_y
+        vertical_cropped = image[start_y:end_y, :]
+
+        crop_width = int(vertical_cropped.shape[1] * self.crop_width_ratio)
+        crop_width = max(1, min(crop_width, vertical_cropped.shape[1]))
+        start_x = max((vertical_cropped.shape[1] - crop_width) // 2, 0)
+        end_x = start_x + crop_width
+
+        roi = vertical_cropped[:, start_x:end_x]
+        roi_info = {
+            "top": start_y,
+            "left": start_x,
+            "height": roi.shape[0],
+            "width": roi.shape[1],
+        }
+        return roi, roi_info
     
     def letterbox(self, image, new_shape=416, color=(114, 114, 114)):
         """Resize image to a square while keeping aspect ratio (YOLO letterbox)."""
@@ -154,23 +170,85 @@ class SimpleWireDetector:
 
         return [x1, y1, x2, y2]
 
-    def shift_bbox_to_original(self, bbox, original_shape, crop_start_y):
-        """Translate bbox from cropped coordinates back to original image space."""
+    def clip_bbox_to_roi(self, bbox, roi):
+        """Ensure bbox stays inside ROI bounds (ROI coordinates)."""
+        x1, y1, x2, y2 = bbox
+        x1 = max(0.0, min(x1, roi["width"]))
+        x2 = max(0.0, min(x2, roi["width"]))
+        y1 = max(0.0, min(y1, roi["height"]))
+        y2 = max(0.0, min(y2, roi["height"]))
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return [x1, y1, x2, y2]
+
+    def shift_bbox_to_original(self, bbox, original_shape, roi):
+        """Translate bbox from ROI coordinates back to original image space."""
         x1, y1, x2, y2 = bbox
 
         width = original_shape[1]
         height = original_shape[0]
 
-        x1 = max(0, min(int(round(x1)), width))
-        x2 = max(0, min(int(round(x2)), width))
+        roi_left = roi["left"]
+        roi_top = roi["top"]
+        roi_right = roi_left + roi["width"]
+        roi_bottom = roi_top + roi["height"]
 
-        y1 = max(0, min(int(round(y1 + crop_start_y)), height))
-        y2 = max(0, min(int(round(y2 + crop_start_y)), height))
+        x1 = int(round(x1 + roi_left))
+        x2 = int(round(x2 + roi_left))
+        y1 = int(round(y1 + roi_top))
+        y2 = int(round(y2 + roi_top))
+
+        x1 = max(roi_left, min(x1, roi_right))
+        x2 = max(roi_left, min(x2, roi_right))
+        y1 = max(roi_top, min(y1, roi_bottom))
+        y2 = max(roi_top, min(y2, roi_bottom))
 
         if x2 <= x1 or y2 <= y1:
             return None
 
         return [x1, y1, x2, y2]
+    def draw_roi(self, image, roi):
+        if not roi:
+            return image
+
+        top = roi["top"]
+        left = roi["left"]
+        bottom = top + roi["height"]
+        right = left + roi["width"]
+
+        cv2.rectangle(image, (left, top), (right, bottom), self.roi_color, 1, lineType=cv2.LINE_AA)
+        cv2.putText(
+            image,
+            "ROI",
+            (left + 8, max(15, top - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            self.roi_color,
+            1,
+        )
+        return image
+
+    def draw_detections(self, image, detections, roi=None):
+        annotated = image
+        if roi:
+            annotated = self.draw_roi(annotated, roi)
+
+        for det in detections:
+            bbox = det['bbox']
+            class_name = det['class_name']
+            confidence = det['confidence']
+            color = self.colors[class_name]
+
+            cv2.rectangle(annotated, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
+
+            label = f"{class_name}: {confidence:.2f}"
+            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+            cv2.rectangle(annotated, (bbox[0], bbox[1] - label_size[1] - 10),
+                          (bbox[0] + label_size[0], bbox[1]), color, -1)
+            cv2.putText(annotated, label, (bbox[0], bbox[1] - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        return annotated
     
     def preprocess(self, image):
         """Preprocess image for model input using YOLO letterbox."""
@@ -309,7 +387,7 @@ class SimpleWireDetector:
         # print(f"  Original image: {image.shape[1]}x{image.shape[0]}")
         
         # Crop to ROI
-        cropped_image, crop_start_y = self.crop_to_roi(image)
+        cropped_image, roi = self.crop_to_roi(image)
         # print(f"  Cropped image: {cropped_image.shape[1]}x{cropped_image.shape[0]}")
         
         # Preprocess (resize to 416x416)
@@ -340,10 +418,14 @@ class SimpleWireDetector:
         # Scale detections from 416x416 to original image coordinates
         scaled_detections = []
         for det in detections:
+            clipped = self.clip_bbox_to_roi(det['bbox'], roi)
+            if clipped is None:
+                continue
+
             scaled_bbox = self.shift_bbox_to_original(
-                det['bbox'],
+                clipped,
                 original_image.shape,
-                crop_start_y
+                roi
             )
 
             if scaled_bbox is None:
@@ -358,24 +440,7 @@ class SimpleWireDetector:
             scaled_detections.append(scaled_det)
         
         # Draw results on ORIGINAL image with scaled coordinates
-        result_image = original_image.copy()
-        for i, det in enumerate(scaled_detections):
-            bbox = det['bbox']
-            class_name = det['class_name']
-            confidence = det['confidence']
-            color = self.colors[class_name]
-            
-            # Verify bbox is within image bounds
-            if (bbox[0] >= 0 and bbox[1] >= 0 and 
-                bbox[2] <= result_image.shape[1] and bbox[3] <= result_image.shape[0]):
-                
-                # Draw bounding box
-                cv2.rectangle(result_image, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
-                
-                # Draw label
-                label = f"{class_name}: {confidence:.2f}"
-                cv2.putText(result_image, label, (bbox[0], bbox[1]-10), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        result_image = self.draw_detections(original_image.copy(), scaled_detections, roi=roi)
         
         processing_time = time.time() - processing_start_time
         return result_image, scaled_detections, processing_time
