@@ -17,8 +17,8 @@ import tempfile
 from collections import deque
 from pathlib import Path
 
-CAMERA_EXPOSURE_TIME = 200  # units as expected by nvarguscamerasrc (typically microseconds)
-CAMERA_ANALOG_GAIN = 2.0
+CAMERA_EXPOSURE_TIME = 200000  # microseconds
+CAMERA_ANALOG_GAIN = 8.0
 CAMERA_PROPERTY_STRING = (
     f'exposuretimerange="{CAMERA_EXPOSURE_TIME} {CAMERA_EXPOSURE_TIME}" '
     f'gainrange="{CAMERA_ANALOG_GAIN} {CAMERA_ANALOG_GAIN}"'
