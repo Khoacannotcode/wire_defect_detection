@@ -50,6 +50,23 @@ except ImportError:
     print("Install with: pip install onnxruntime")
     sys.exit(1)
 
+# Import visualization standards
+try:
+    # Try to import from learning_based directory
+    sys.path.insert(0, str(Path(__file__).parent.parent / 'learning_based'))
+    from visualization_standards import get_class_color
+    VISUALIZATION_STANDARDS_AVAILABLE = True
+except ImportError:
+    print("⚠️ Warning: visualization_standards.py not found, using default colors")
+    VISUALIZATION_STANDARDS_AVAILABLE = False
+    def get_class_color(class_name):
+        """Fallback color function"""
+        color_map = {
+            'NOK': (0, 165, 255), 'breaks': (0, 255, 255), 'damage': (0, 0, 255),
+            'drops': (128, 128, 128), 'normal': (0, 128, 0), 'shift': (255, 0, 0)
+        }
+        return color_map.get(class_name, (128, 128, 128))
+
 # Determine workspace paths
 ROOT_DIR = Path(__file__).resolve().parent
 MODELS_DIR = ROOT_DIR / "models"
@@ -413,26 +430,65 @@ class LiveWireDetector:
         self.using_cuda = 'CUDAExecutionProvider' in self.session.get_providers()
         self.is_aarch64 = is_aarch64
 
-        # Settings
-        self.input_size = 416
+        # Settings - Updated for 6-class model (640x640 input)
+        self.input_size = 640  # Updated from 416 to 640 for new model
         self.crop_height = 80
         self.crop_width_ratio = 0.6
-        self.conf_threshold = 0.22
+        self.conf_threshold = 0.22  # Default threshold (can be overridden by per-class thresholds)
         self.roi_color = (0, 255, 255)
 
-        # Class info / colors
-        self.class_names = ['fail', 'pagan', 'valid']
-        self.colors = {
-            'fail': (0, 0, 255),
-            'pagan': (255, 0, 0),
-            'valid': (0, 255, 0)
-        }
-
-        # Statistics
-        self.detection_counts = {'fail': 0, 'pagan': 0, 'valid': 0}
+        # Load class names dynamically
+        self.class_names = self._load_class_names()
+        
+        # Build color map using visualization standards
+        self.colors = {}
+        for class_name in self.class_names:
+            self.colors[class_name] = get_class_color(class_name)
+        
+        # Defect classes (exclude "normal" from visualization)
+        self.defect_classes = [cls for cls in self.class_names if cls != 'normal']
+        
+        # Per-class thresholds (default to global threshold)
+        self.class_thresholds = {cls: self.conf_threshold for cls in self.class_names}
+        
+        # Statistics - initialize for all classes
+        self.detection_counts = {cls: 0 for cls in self.class_names}
         self.fps_history = deque(maxlen=60)
 
-        print("✅ Detector ready")
+        print(f"✅ Detector ready - Classes: {self.class_names}")
+        print(f"   Defect classes (for visualization): {self.defect_classes}")
+    
+    def _load_class_names(self):
+        """Load class names from config file or default to 6-class model classes"""
+        # Try to load from config file first
+        config_file = Path(__file__).parent / 'config.json'
+        if config_file.exists():
+            try:
+                import json
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    if 'classes' in config:
+                        print(f"[INFO] Loaded classes from config.json: {config['classes']}")
+                        return config['classes']
+            except Exception as e:
+                print(f"[WARN] Failed to load classes from config.json: {e}")
+        
+        # Try to load from classes.txt in learning_based
+        classes_file = Path(__file__).parent.parent / 'learning_based' / 'labels' / 'classes.txt'
+        if classes_file.exists():
+            try:
+                with open(classes_file, 'r', encoding='utf-8') as f:
+                    class_names = [line.strip() for line in f if line.strip()]
+                if class_names:
+                    print(f"[INFO] Loaded classes from {classes_file}: {class_names}")
+                    return class_names
+            except Exception as e:
+                print(f"[WARN] Failed to load classes from {classes_file}: {e}")
+        
+        # Default to 6-class model classes
+        default_classes = ['NOK', 'breaks', 'damage', 'drops', 'normal', 'shift']
+        print(f"[INFO] Using default 6-class model classes: {default_classes}")
+        return default_classes
     
     def crop_to_roi(self, frame):
         """Crop frame to the central ROI (vertical band + side trim) used during training."""
@@ -624,32 +680,35 @@ class LiveWireDetector:
         return frame
 
     def draw_detections(self, frame, detections, roi=None):
-        """Draw ROI outline plus bounding boxes and labels on frame."""
+        """
+        Draw ROI outline plus minimal bounding boxes (colored rectangles only, no text).
+        Only displays defect classes (excludes 'normal').
+        Optimized for FPS performance.
+        """
         annotated = frame
         if roi:
             annotated = self.draw_roi(annotated, roi)
 
-        for detection in detections:
+        # Filter detections: only show defect classes (exclude 'normal')
+        defect_detections = [
+            det for det in detections 
+            if det['class_name'] in self.defect_classes
+        ]
+
+        # Draw minimal bboxes: colored rectangles only, no text labels
+        for detection in defect_detections:
             bbox = detection['bbox']
             class_name = detection['class_name']
-            confidence = detection['confidence']
             
+            # Get color from visualization standards
             color = self.colors.get(class_name, (128, 128, 128))
             
-            # Draw bounding box
-            cv2.rectangle(annotated, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
-            
-            # Draw label
-            label = f"{class_name}: {confidence:.2f}"
-            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-            
-            # Background for label
-            cv2.rectangle(annotated, (bbox[0], bbox[1] - label_size[1] - 10), 
-                         (bbox[0] + label_size[0], bbox[1]), color, -1)
-            
-            # Label text
-            cv2.putText(annotated, label, (bbox[0], bbox[1] - 5), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            # Draw minimal bounding box (rectangle only, no text)
+            # Using thickness 2 for visibility
+            cv2.rectangle(annotated, 
+                         (int(bbox[0]), int(bbox[1])), 
+                         (int(bbox[2]), int(bbox[3])), 
+                         color, 2)
         
         return annotated
     
@@ -698,6 +757,7 @@ class LiveWireDetector:
                 'confidence': det['confidence']
             })
 
+        # Draw detections (only defect classes, minimal bbox)
         annotated_frame = self.draw_detections(original_frame, scaled_detections, roi=roi)
 
         processing_time = time.time() - start_time
@@ -715,11 +775,15 @@ class LiveWireDetector:
 
             x1, y1, x2, y2, conf, class_id = det[:6]
 
-            if conf < self.conf_threshold:
-                continue
-
             class_id = int(class_id)
             if class_id >= len(self.class_names):
+                continue
+
+            # Use per-class threshold if available, otherwise use global threshold
+            class_name = self.class_names[class_id]
+            threshold = self.class_thresholds.get(class_name, self.conf_threshold)
+            
+            if conf < threshold:
                 continue
 
             bbox_cropped = self.scale_bbox_from_letterbox(
@@ -734,12 +798,23 @@ class LiveWireDetector:
 
             raw_detections.append({
                 'class_id': class_id,
-                'class_name': self.class_names[class_id],
+                'class_name': class_name,
                 'confidence': float(conf),
                 'bbox': bbox_cropped
             })
 
         return self.nms(raw_detections, iou_threshold=0.5)
+    
+    def set_class_threshold(self, class_name: str, threshold: float):
+        """Set threshold for a specific class"""
+        if class_name in self.class_names:
+            self.class_thresholds[class_name] = threshold
+    
+    def set_class_thresholds(self, thresholds: dict):
+        """Set thresholds for multiple classes"""
+        for class_name, threshold in thresholds.items():
+            if class_name in self.class_names:
+                self.class_thresholds[class_name] = threshold
     
     def update_stats(self, detections, inference_time):
         """Update detection statistics"""
@@ -756,12 +831,13 @@ class LiveWireDetector:
         total_detections = sum(self.detection_counts.values())
         avg_fps = np.mean(self.fps_history) if self.fps_history else 0
         
-        print(f"\r[Frame {frame_count:4d}] "
-              f"FPS: {avg_fps:4.1f} | "
-              f"Total: {total_detections:4d} | "
-              f"Fail: {self.detection_counts['fail']:3d} | "
-              f"Pagan: {self.detection_counts['pagan']:3d} | "
-              f"Valid: {self.detection_counts['valid']:3d}", 
+        # Build stats string dynamically for all classes
+        stats_parts = [f"FPS: {avg_fps:4.1f}", f"Total: {total_detections:4d}"]
+        for class_name in self.class_names:
+            count = self.detection_counts.get(class_name, 0)
+            stats_parts.append(f"{class_name}: {count:3d}")
+        
+        print(f"\r[Frame {frame_count:4d}] " + " | ".join(stats_parts), 
               end='', flush=True)
 
 def parse_args():
@@ -943,7 +1019,7 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
                     if not os.path.exists(pth_file):
                         print(f"[INFO] Creating opencv-system.pth file: {pth_file}")
                         try:
-                            with open(pth_file, 'w') as f:
+                            with open(pth_file, 'w', encoding='utf-8') as f:
                                 f.write(system_opencv_path + '\n')
                             print("[INFO] Created opencv-system.pth - please restart the script")
                         except Exception as e:
