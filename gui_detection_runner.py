@@ -52,12 +52,16 @@ class DetectionGUI:
         self.frame_count = 0
         self.last_fps_update = time.time()
         self.last_log_update = time.time()
-        self.log_update_interval = 1.0  # Update log display every 1 second (reduced frequency)
+        self.log_update_interval = 2.0  # Update log display every 2 seconds (optimized for FPS)
         self.log_widgets = {}  # Store log widgets for reuse (avoid destroy/create)
         self.legend_items = {}  # Store legend items for highlighting
         self.roi_aspect_ratio = None  # Store ROI aspect ratio
         self.pending_gui_updates = 0  # Track pending GUI updates to prevent queue buildup
         self.session_duration_update_timer = None  # Timer for session duration updates
+        self.last_alert_update = time.time()
+        self.alert_update_interval = 0.2  # Update alerts every 200ms (5 FPS for alerts)
+        self.last_legend_update = time.time()
+        self.legend_update_interval = 0.3  # Update legend highlighting every 300ms
         
         # Config
         self.config_file = ROOT_DIR / 'config.json'
@@ -516,12 +520,16 @@ class DetectionGUI:
             
             # Update GUI from main thread (throttle to prevent queue buildup)
             # Only schedule if not too many pending updates
-            if self.pending_gui_updates < 2:
+            if self.pending_gui_updates < 1:  # Reduced from 2 to 1 for better FPS
                 self.pending_gui_updates += 1
                 self.root.after(0, lambda: self._safe_update_display())
             
-            # Control frame rate (target ~15-30 FPS)
-            time.sleep(0.033)  # ~30 FPS max
+            # Control frame rate (optimized for 15-30 FPS target)
+            # Adaptive sleep: if FPS is low, increase sleep time
+            if self.fps > 0 and self.fps < 15:
+                time.sleep(0.05)  # ~20 FPS max when FPS is low
+            else:
+                time.sleep(0.033)  # ~30 FPS max normally
     
     def _safe_update_display(self):
         """Wrapper for update_display with exception handling and pending counter"""
@@ -590,40 +598,44 @@ class DetectionGUI:
             self.video_label.config(image=photo, text="")
             self.video_label.image = photo  # Keep a reference
             
-            # Update status labels
+            # Update status labels (always update - lightweight)
             self.fps_label.config(text=f"FPS: {self.fps:.1f}")
             self.detection_label.config(text=f"Detections: {len(self.current_detections)}")
             
-            # Update visual alerts and defect status
-            self.update_defect_alerts()
+            # Update visual alerts periodically (not every frame for performance)
+            current_time = time.time()
+            if current_time - self.last_alert_update >= self.alert_update_interval:
+                self.update_defect_alerts()
+                self.last_alert_update = current_time
             
             # Update log display periodically (not every frame for performance)
-            current_time = time.time()
             if current_time - self.last_log_update >= self.log_update_interval:
                 self.update_log_display()
                 self.last_log_update = current_time
             
-            # Update legend highlighting for active defects
-            if self.detector and self.legend_items:
-                # Get active defect classes from current detections
-                active_defects = set()
-                for det in self.current_detections:
-                    if det['class_name'] in self.detector.defect_classes:
-                        active_defects.add(det['class_name'])
-                
-                # Highlight active defects in legend
-                for class_name, item_data in self.legend_items.items():
-                    label = item_data['label']
-                    canvas = item_data['canvas']
+            # Update legend highlighting periodically (not every frame for performance)
+            if current_time - self.last_legend_update >= self.legend_update_interval:
+                if self.detector and self.legend_items:
+                    # Get active defect classes from current detections
+                    active_defects = set()
+                    for det in self.current_detections:
+                        if det['class_name'] in self.detector.defect_classes:
+                            active_defects.add(det['class_name'])
                     
-                    if class_name in active_defects:
-                        # Highlight: bold text, thicker border
-                        label.config(font=("Arial", 9, "bold"), foreground="red")
-                        canvas.config(highlightthickness=2, highlightbackground="red")
-                    else:
-                        # Normal: regular text, normal border
-                        label.config(font=("Arial", 9), foreground="black")
-                        canvas.config(highlightthickness=1, highlightbackground="gray")
+                    # Highlight active defects in legend
+                    for class_name, item_data in self.legend_items.items():
+                        label = item_data['label']
+                        canvas = item_data['canvas']
+                        
+                        if class_name in active_defects:
+                            # Highlight: bold text, thicker border
+                            label.config(font=("Arial", 9, "bold"), foreground="red")
+                            canvas.config(highlightthickness=2, highlightbackground="red")
+                        else:
+                            # Normal: regular text, normal border
+                            label.config(font=("Arial", 9), foreground="black")
+                            canvas.config(highlightthickness=1, highlightbackground="gray")
+                self.last_legend_update = current_time
         
         except Exception as e:
             print(f"[ERROR] Display update failed: {e}")
