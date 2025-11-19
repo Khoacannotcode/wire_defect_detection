@@ -93,8 +93,16 @@ class SimpleWireDetector:
         self.using_cuda = 'CUDAExecutionProvider' in self.session.get_providers()
         self.is_aarch64 = is_aarch64
         
-        # Model settings - Updated for 6-class model (640x640 input)
-        self.input_size = 640  # Updated from 416 to 640 for new model
+        # Detect input size from model automatically
+        input_shape = self.session.get_inputs()[0].shape
+        if len(input_shape) >= 3 and input_shape[2] is not None:
+            self.input_size = int(input_shape[2])  # e.g., [1, 3, 640, 640] -> 640
+        else:
+            # Fallback: default to 640 for 6-class model
+            self.input_size = 640
+            print("[WARN] Could not detect input size from model, defaulting to 640")
+        
+        print(f"[INFO] Detected model input size: {self.input_size}x{self.input_size}")
         self.crop_height = 80
         self.crop_width_ratio = 0.6
         self.conf_threshold = 0.22  # Default threshold
@@ -156,7 +164,7 @@ class SimpleWireDetector:
         }
         return roi, roi_info
     
-    def letterbox(self, image, new_shape=416, color=(114, 114, 114)):
+    def letterbox(self, image, new_shape=None, color=(114, 114, 114)):
         """Resize image to a square while keeping aspect ratio (YOLO letterbox)."""
         shape = image.shape[:2]
 
@@ -436,7 +444,7 @@ class SimpleWireDetector:
         cropped_image, roi = self.crop_to_roi(image)
         # print(f"  Cropped image: {cropped_image.shape[1]}x{cropped_image.shape[0]}")
         
-        # Preprocess (resize to 640x640)
+        # Preprocess (resize to model input size)
         input_data, ratio, dwdh = self.preprocess(cropped_image)
         
         # Run inference
@@ -445,7 +453,7 @@ class SimpleWireDetector:
         # Postprocess
         detections = self.postprocess(outputs[0], ratio, dwdh, cropped_image.shape)
         
-        # Scale detections from 640x640 to original image coordinates
+        # Scale detections from model input size to original image coordinates
         scaled_detections = []
         for det in detections:
             clipped = self.clip_bbox_to_roi(det['bbox'], roi)
