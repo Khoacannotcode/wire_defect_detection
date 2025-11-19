@@ -25,6 +25,9 @@ sys.path.insert(0, str(ROOT_DIR))
 # Import from run_camera_detection
 from run_camera_detection import LiveWireDetector, open_capture, MODELS_DIR
 
+# Import defect logger
+from defect_logger import DefectLogger
+
 # Add system packages to path for compatibility
 sys.path.insert(0, '/usr/lib/python3/dist-packages')
 
@@ -47,6 +50,8 @@ class DetectionGUI:
         self.fps = 0.0
         self.frame_count = 0
         self.last_fps_update = time.time()
+        self.last_log_update = time.time()
+        self.log_update_interval = 0.5  # Update log display every 0.5 seconds
         self.legend_items = {}  # Store legend items for highlighting
         self.roi_aspect_ratio = None  # Store ROI aspect ratio
         
@@ -57,6 +62,12 @@ class DetectionGUI:
         # Threshold sliders (will be initialized after detector)
         self.threshold_sliders = {}
         self.threshold_labels = {}
+        
+        # Frame counter for logging
+        self.frame_number = 0
+        
+        # Initialize defect logger
+        self.defect_logger = DefectLogger()
         
         # Initialize detector
         self.init_detector()
@@ -199,10 +210,37 @@ class DetectionGUI:
         self.threshold_container = ttk.Frame(threshold_frame)
         self.threshold_container.pack(fill=tk.X)
         
+        # Real-time Log/Statistics section
+        log_frame = ttk.LabelFrame(control_frame, text="Real-time Log & Statistics", padding="5")
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+        
+        # Create scrollable text widget for logs
+        log_container = ttk.Frame(log_frame)
+        log_container.pack(fill=tk.BOTH, expand=True)
+        
+        # Scrollbar for log text
+        log_scrollbar = ttk.Scrollbar(log_container)
+        log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Text widget for real-time logs
+        self.log_text = tk.Text(log_container, height=8, wrap=tk.WORD, 
+                               yscrollcommand=log_scrollbar.set,
+                               font=("Courier", 9))
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        log_scrollbar.config(command=self.log_text.yview)
+        
+        # Log file path display
+        self.log_path_label = ttk.Label(control_frame, text="Log file: Not saved", 
+                                       foreground="gray", font=("Arial", 8))
+        self.log_path_label.pack(pady=(5, 0))
+        
         # Update legend and thresholds if detector is available
         if self.detector:
             self.update_legend()
             self.setup_threshold_sliders()
+        
+        # Initialize log display
+        self.update_log_display()
     
     def update_legend(self):
         """Update class color legend with visual color swatches (human-friendly)"""
@@ -417,6 +455,13 @@ class DetectionGUI:
                         self.frame_count = 0
                         self.last_fps_update = current_time
                     
+                    # Log defects if session is active
+                    if self.defect_logger.session_active:
+                        self.defect_logger.log_defects(self.frame_number, detections)
+                    
+                    # Increment frame number
+                    self.frame_number += 1
+                    
                     # Store for GUI update
                     self.current_frame = annotated_roi
                     self.current_detections = detections
@@ -427,6 +472,8 @@ class DetectionGUI:
             else:
                 self.current_frame = roi_frame
                 self.current_detections = []
+                # Still increment frame number
+                self.frame_number += 1
             
             # Update GUI from main thread
             self.root.after(0, self.update_display)
@@ -496,6 +543,12 @@ class DetectionGUI:
             self.fps_label.config(text=f"FPS: {self.fps:.1f}")
             self.detection_label.config(text=f"Detections: {len(self.current_detections)}")
             
+            # Update log display periodically (not every frame for performance)
+            current_time = time.time()
+            if current_time - self.last_log_update >= self.log_update_interval:
+                self.update_log_display()
+                self.last_log_update = current_time
+            
             # Update legend highlighting for active defects
             if self.detector and self.legend_items:
                 # Get active defect classes from current detections
@@ -523,17 +576,42 @@ class DetectionGUI:
     
     def start_session(self):
         """Start detection session"""
+        # Reset frame number for new session
+        self.frame_number = 0
+        self.defect_logger.start_session()
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
         self.session_status_label.config(text="Status: Active", foreground="green")
+        self.log_path_label.config(text="Log file: Session active...", foreground="green")
         print("[INFO] Session started")
+        self.update_log_display()
     
     def stop_session(self):
         """Stop detection session"""
+        self.defect_logger.stop_session()
+        
+        # Save log file
+        log_path = self.defect_logger.save_session_log()
+        
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.session_status_label.config(text="Status: Stopped", foreground="gray")
+        
+        # Display log file path
+        if log_path:
+            self.log_path_label.config(
+                text=f"Log file: {log_path.name} (saved to {log_path.parent})",
+                foreground="blue"
+            )
+            print(f"[INFO] Session log saved: {log_path}")
+        else:
+            self.log_path_label.config(
+                text="Log file: Failed to save",
+                foreground="red"
+            )
+        
         print("[INFO] Session stopped")
+        self.update_log_display()
     
     def on_closing(self):
         """Handle window close event"""
@@ -545,11 +623,86 @@ class DetectionGUI:
             except:
                 pass
         
+        # Stop session if active
+        if self.defect_logger.session_active:
+            self.defect_logger.stop_session()
+            self.defect_logger.save_session_log()
+        
         # Save thresholds and config
         self.save_thresholds()
         self.save_config()
         
         self.root.destroy()
+    
+    def update_log_display(self):
+        """Update real-time log display with current statistics"""
+        if not hasattr(self, 'log_text'):
+            return
+        
+        try:
+            # Get session statistics
+            stats = self.defect_logger.get_session_stats()
+            
+            # Clear and update log text
+            self.log_text.delete(1.0, tk.END)
+            
+            # Session status
+            if stats['session_active']:
+                self.log_text.insert(tk.END, "=== SESSION ACTIVE ===\n", "header")
+                self.log_text.insert(tk.END, f"Session ID: {stats['session_id']}\n")
+                self.log_text.insert(tk.END, f"Frames Processed: {stats['frames_processed']}\n\n")
+            else:
+                self.log_text.insert(tk.END, "=== SESSION STOPPED ===\n", "header")
+                if stats['session_id']:
+                    self.log_text.insert(tk.END, f"Session ID: {stats['session_id']}\n")
+                self.log_text.insert(tk.END, f"Frames Processed: {stats['frames_processed']}\n\n")
+            
+            # Defect summary
+            self.log_text.insert(tk.END, "--- Defect Summary ---\n", "section")
+            self.log_text.insert(tk.END, f"Total Defects: {stats['total_defects']}\n")
+            self.log_text.insert(tk.END, f"Total Clusters: {stats['total_clusters']}\n\n")
+            
+            # Active cluster info
+            if stats['active_cluster']:
+                cluster = stats['active_cluster']
+                self.log_text.insert(tk.END, "--- Active Cluster ---\n", "section")
+                self.log_text.insert(tk.END, f"Duration: {cluster['duration']:.2f}s\n")
+                self.log_text.insert(tk.END, f"Frames: {cluster['frame_count']}\n")
+                self.log_text.insert(tk.END, f"Defects: {cluster['defect_count']}\n")
+                self.log_text.insert(tk.END, f"Classes: {', '.join(cluster['classes'].keys())}\n\n")
+            else:
+                self.log_text.insert(tk.END, "--- Active Cluster ---\n", "section")
+                self.log_text.insert(tk.END, "No active cluster\n\n")
+            
+            # Stripe timing
+            if stats['stripe_timing']:
+                timing = stats['stripe_timing']
+                self.log_text.insert(tk.END, "--- Stripe Timing ---\n", "section")
+                self.log_text.insert(tk.END, f"Duration: {timing['duration']:.3f}s\n")
+                self.log_text.insert(tk.END, f"Frames: {timing['start_frame']} → {timing['end_frame']}\n\n")
+            else:
+                self.log_text.insert(tk.END, "--- Stripe Timing ---\n", "section")
+                self.log_text.insert(tk.END, "No normal stripes detected\n\n")
+            
+            # Per-class counts
+            if stats['class_counts']:
+                self.log_text.insert(tk.END, "--- Per-Class Counts ---\n", "section")
+                for class_name, count in sorted(stats['class_counts'].items(), 
+                                                key=lambda x: x[1], reverse=True):
+                    self.log_text.insert(tk.END, f"{class_name}: {count}\n")
+            else:
+                self.log_text.insert(tk.END, "--- Per-Class Counts ---\n", "section")
+                self.log_text.insert(tk.END, "No defects detected\n")
+            
+            # Configure text tags for formatting
+            self.log_text.tag_config("header", foreground="blue", font=("Courier", 9, "bold"))
+            self.log_text.tag_config("section", foreground="darkgreen", font=("Courier", 9, "bold"))
+            
+            # Auto-scroll to bottom
+            self.log_text.see(tk.END)
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to update log display: {e}")
 
 
 def main():
