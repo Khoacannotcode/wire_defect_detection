@@ -54,6 +54,10 @@ class DetectionGUI:
         self.config_file = ROOT_DIR / 'config.json'
         self.config = self.load_config()
         
+        # Threshold sliders (will be initialized after detector)
+        self.threshold_sliders = {}
+        self.threshold_labels = {}
+        
         # Initialize detector
         self.init_detector()
         
@@ -76,7 +80,8 @@ class DetectionGUI:
             'camera_fps': 30,
             'use_gstreamer': False,
             'display_width': 800,
-            'display_height': 600
+            'display_height': 600,
+            'thresholds': {}  # Per-class thresholds (will be populated after detector init)
         }
         
         if self.config_file.exists():
@@ -119,6 +124,9 @@ class DetectionGUI:
         try:
             self.detector = LiveWireDetector(model_path)
             print("[INFO] Detector initialized successfully")
+            
+            # Load per-class thresholds from config
+            self.load_thresholds()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to initialize detector: {e}")
             print(f"[ERROR] Detector initialization failed: {e}")
@@ -183,9 +191,18 @@ class DetectionGUI:
         self.legend_container = ttk.Frame(legend_frame)
         self.legend_container.pack(fill=tk.X)
         
-        # Update legend if detector is available
+        # Threshold controls section
+        threshold_frame = ttk.LabelFrame(control_frame, text="Per-Class Threshold Controls", padding="5")
+        threshold_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        # Create threshold sliders container
+        self.threshold_container = ttk.Frame(threshold_frame)
+        self.threshold_container.pack(fill=tk.X)
+        
+        # Update legend and thresholds if detector is available
         if self.detector:
             self.update_legend()
+            self.setup_threshold_sliders()
     
     def update_legend(self):
         """Update class color legend with visual color swatches (human-friendly)"""
@@ -224,6 +241,115 @@ class DetectionGUI:
                 'label': class_label,
                 'canvas': color_canvas
             }
+    
+    def setup_threshold_sliders(self):
+        """Setup threshold sliders for each defect class"""
+        if not self.detector:
+            return
+        
+        # Clear existing sliders
+        for widget in self.threshold_container.winfo_children():
+            widget.destroy()
+        self.threshold_sliders.clear()
+        self.threshold_labels.clear()
+        
+        # Create slider for each defect class
+        for class_name in self.detector.defect_classes:
+            # Get color for this class
+            color = self.detector.colors.get(class_name, (128, 128, 128))
+            color_rgb = (color[2], color[1], color[0])
+            hex_color = f"#{color_rgb[0]:02x}{color_rgb[1]:02x}{color_rgb[2]:02x}"
+            
+            # Create frame for each slider
+            slider_frame = ttk.Frame(self.threshold_container)
+            slider_frame.pack(fill=tk.X, pady=2)
+            
+            # Color indicator (small colored box)
+            color_indicator = tk.Canvas(slider_frame, width=20, height=20, highlightthickness=1,
+                                       highlightbackground="gray", borderwidth=0)
+            color_indicator.pack(side=tk.LEFT, padx=(0, 5))
+            color_indicator.create_rectangle(2, 2, 18, 18, fill=hex_color, outline="gray", width=1)
+            
+            # Class name label
+            class_label = ttk.Label(slider_frame, text=f"{class_name}:", width=10, anchor=tk.W)
+            class_label.pack(side=tk.LEFT, padx=(0, 5))
+            
+            # Slider (range 0.0 to 1.0, resolution 0.01)
+            slider = ttk.Scale(slider_frame, from_=0.0, to=1.0, orient=tk.HORIZONTAL,
+                              length=200, command=lambda val, name=class_name: self.on_threshold_change(name, val))
+            slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+            
+            # Value label (shows current threshold)
+            value_label = ttk.Label(slider_frame, text="0.25", width=6, anchor=tk.E)
+            value_label.pack(side=tk.LEFT, padx=(5, 0))
+            
+            # Store references
+            self.threshold_sliders[class_name] = slider
+            self.threshold_labels[class_name] = value_label
+            
+            # Set initial value from config or default
+            threshold = self.config.get('thresholds', {}).get(class_name, 0.25)
+            threshold = max(0.0, min(1.0, float(threshold)))  # Validate range
+            slider.set(threshold)
+            value_label.config(text=f"{threshold:.2f}")
+    
+    def load_thresholds(self):
+        """Load per-class thresholds from config and apply to detector"""
+        if not self.detector:
+            return
+        
+        thresholds = self.config.get('thresholds', {})
+        thresholds_dict = {}
+        
+        # Load thresholds for each defect class
+        for class_name in self.detector.defect_classes:
+            threshold = thresholds.get(class_name, 0.25)
+            threshold = max(0.0, min(1.0, float(threshold)))  # Validate range
+            thresholds_dict[class_name] = threshold
+        
+        # Apply to detector
+        if thresholds_dict:
+            self.detector.set_class_thresholds(thresholds_dict)
+            print(f"[INFO] Loaded thresholds from config: {thresholds_dict}")
+    
+    def on_threshold_change(self, class_name, value):
+        """Callback when threshold slider changes"""
+        try:
+            threshold = float(value)
+            threshold = max(0.0, min(1.0, threshold))  # Ensure in range
+            
+            # Update detector in real-time
+            if self.detector:
+                self.detector.set_class_threshold(class_name, threshold)
+            
+            # Update value label
+            if class_name in self.threshold_labels:
+                self.threshold_labels[class_name].config(text=f"{threshold:.2f}")
+            
+            # Save to config (debounced - only save after user stops dragging)
+            self.root.after(500, lambda: self.save_thresholds())
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to update threshold for {class_name}: {e}")
+    
+    def save_thresholds(self):
+        """Save current thresholds to config.json"""
+        if not self.detector:
+            return
+        
+        # Collect current threshold values from sliders
+        thresholds = {}
+        for class_name in self.detector.defect_classes:
+            if class_name in self.threshold_sliders:
+                threshold = self.threshold_sliders[class_name].get()
+                thresholds[class_name] = float(threshold)
+        
+        # Update config
+        self.config['thresholds'] = thresholds
+        
+        # Save to file
+        self.save_config()
+        print(f"[INFO] Saved thresholds to config: {thresholds}")
     
     def start_capture(self):
         """Start camera capture in separate thread"""
@@ -419,7 +545,8 @@ class DetectionGUI:
             except:
                 pass
         
-        # Save config
+        # Save thresholds and config
+        self.save_thresholds()
         self.save_config()
         
         self.root.destroy()
