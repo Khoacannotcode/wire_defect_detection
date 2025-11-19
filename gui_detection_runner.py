@@ -47,6 +47,7 @@ class DetectionGUI:
         self.fps = 0.0
         self.frame_count = 0
         self.last_fps_update = time.time()
+        self.legend_items = {}  # Store legend items for highlighting
         
         # Config
         self.config_file = ROOT_DIR / 'config.json'
@@ -174,15 +175,8 @@ class DetectionGUI:
         self.detection_label = ttk.Label(status_frame, text="Detections: 0")
         self.detection_label.pack(side=tk.LEFT, padx=5)
         
-        # Statistics panel (placeholder for future tasks)
-        stats_frame = ttk.LabelFrame(control_frame, text="Statistics", padding="5")
-        stats_frame.pack(fill=tk.BOTH, expand=True)
-        
-        self.stats_text = tk.Text(stats_frame, height=4, wrap=tk.WORD, state=tk.DISABLED)
-        self.stats_text.pack(fill=tk.BOTH, expand=True)
-        
-        # Class color legend with visual color swatches
-        legend_frame = ttk.LabelFrame(control_frame, text="Class Colors", padding="5")
+        # Class color legend with active defect highlighting (merged with statistics)
+        legend_frame = ttk.LabelFrame(control_frame, text="Defect Classes", padding="5")
         legend_frame.pack(fill=tk.X, pady=(5, 0))
         
         # Create frame for color swatches (visual, human-friendly)
@@ -201,6 +195,7 @@ class DetectionGUI:
         # Clear existing legend widgets
         for widget in self.legend_container.winfo_children():
             widget.destroy()
+        self.legend_items.clear()
         
         # Create color swatches for each defect class
         for class_name in self.detector.defect_classes:
@@ -222,6 +217,13 @@ class DetectionGUI:
             # Create label with class name
             class_label = ttk.Label(item_frame, text=class_name, font=("Arial", 9))
             class_label.pack(side=tk.LEFT)
+            
+            # Store for highlighting
+            self.legend_items[class_name] = {
+                'frame': item_frame,
+                'label': class_label,
+                'canvas': color_canvas
+            }
     
     def start_capture(self):
         """Start camera capture in separate thread"""
@@ -324,32 +326,10 @@ class DetectionGUI:
                 label_width = self.config.get('display_width', 800)
                 label_height = self.config.get('display_height', 600)
             
-            # Resize ROI frame maintaining aspect ratio (fit width, preserve aspect)
-            # Video is horizontal rectangle, so fit to label width and maintain aspect ratio
-            frame_height, frame_width = self.current_frame.shape[:2]
-            frame_aspect = frame_width / frame_height if frame_height > 0 else 1.0
-            
-            # Calculate resize dimensions maintaining aspect ratio
-            if frame_aspect > (label_width / label_height):
-                # Frame is wider - fit to width
-                display_width = label_width
-                display_height = int(label_width / frame_aspect)
-            else:
-                # Frame is taller - fit to height
-                display_height = label_height
-                display_width = int(label_height * frame_aspect)
-            
-            # Resize maintaining aspect ratio
-            resized = cv2.resize(self.current_frame, (display_width, display_height), 
+            # Resize ROI frame to fill entire video display widget (stretch to fit, no black borders)
+            # User wants to see only ROI region, stretched to fill the entire display area
+            resized = cv2.resize(self.current_frame, (label_width, label_height), 
                                 interpolation=cv2.INTER_LINEAR)
-            
-            # Create black background to center the resized frame
-            display_frame = np.zeros((label_height, label_width, 3), dtype=np.uint8)
-            # Center the resized frame
-            y_offset = (label_height - display_height) // 2
-            x_offset = (label_width - display_width) // 2
-            display_frame[y_offset:y_offset+display_height, x_offset:x_offset+display_width] = resized
-            resized = display_frame
             
             # Convert BGR to RGB
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
@@ -366,27 +346,27 @@ class DetectionGUI:
             self.fps_label.config(text=f"FPS: {self.fps:.1f}")
             self.detection_label.config(text=f"Detections: {len(self.current_detections)}")
             
-            # Update statistics - highlight active defects (currently visible in frame)
-            if self.detector:
+            # Update legend highlighting for active defects
+            if self.detector and self.legend_items:
                 # Get active defect classes from current detections
                 active_defects = set()
                 for det in self.current_detections:
                     if det['class_name'] in self.detector.defect_classes:
                         active_defects.add(det['class_name'])
                 
-                # Build statistics with highlighting for active defects
-                stats_lines = []
-                if active_defects:
-                    stats_lines.append("Active Defects (currently visible):")
-                    for class_name in sorted(active_defects):
-                        stats_lines.append(f"  ⚠ {class_name}")
-                else:
-                    stats_lines.append("No defects detected")
-                
-                self.stats_text.config(state=tk.NORMAL)
-                self.stats_text.delete(1.0, tk.END)
-                self.stats_text.insert(1.0, "\n".join(stats_lines))
-                self.stats_text.config(state=tk.DISABLED)
+                # Highlight active defects in legend
+                for class_name, item_data in self.legend_items.items():
+                    label = item_data['label']
+                    canvas = item_data['canvas']
+                    
+                    if class_name in active_defects:
+                        # Highlight: bold text, thicker border
+                        label.config(font=("Arial", 9, "bold"), foreground="red")
+                        canvas.config(highlightthickness=2, highlightbackground="red")
+                    else:
+                        # Normal: regular text, normal border
+                        label.config(font=("Arial", 9), foreground="black")
+                        canvas.config(highlightthickness=1, highlightbackground="gray")
         
         except Exception as e:
             print(f"[ERROR] Display update failed: {e}")
