@@ -139,10 +139,10 @@ class DetectionGUI:
         main_frame.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
         
-        # Video display label - will fill video_frame, ROI will fill label (no black bars)
+        # Video display label - will size to ROI image only (no large 16:9 frame)
         self.video_label = ttk.Label(video_frame, text="Initializing camera...", 
                                      background="black", foreground="white")
-        self.video_label.pack(fill=tk.BOTH, expand=True)  # Fill video_frame
+        self.video_label.pack()  # Don't fill/expand - will size to ROI image only
         
         # ============================================
         # BOTTOM SECTION: Control Panel
@@ -334,22 +334,28 @@ class DetectionGUI:
             # Store ROI aspect ratio
             self.roi_aspect_ratio = frame_aspect
             
-            # User requirement: ROI is wide and short (long and short rectangle)
-            # Keep ROI aspect ratio, resize to fill GUI widget completely, remove black bars
-            # Strategy: Resize ROI to fill widget width, maintain aspect ratio
-            # Widget will show only the resized ROI (no black background)
+            # User requirement: Only show ROI area compactly, no large 16:9 frame
+            # Strategy: Resize ROI to reasonable display size maintaining aspect ratio
+            # Widget will size to image (no large frame, just compact ROI display)
             
-            # Calculate resize to fill widget width, maintain ROI aspect ratio
-            display_width = label_width
-            display_height = int(label_width / frame_aspect)
+            # Get available width from video_frame (parent of video_label)
+            video_frame_widget = self.video_label.master
+            video_frame_widget.update_idletasks()
+            available_width = video_frame_widget.winfo_width() - 10  # Account for padding
+            
+            # If video_frame not yet sized, use config defaults
+            if available_width <= 1:
+                available_width = self.config.get('display_width', 800)
+            
+            # Calculate resize to fill available width, maintain ROI aspect ratio
+            display_width = available_width
+            display_height = int(available_width / frame_aspect)
             
             # Resize ROI maintaining aspect ratio
             resized = cv2.resize(self.current_frame, (display_width, display_height), 
                                 interpolation=cv2.INTER_LINEAR)
             
-            # Use resized ROI directly - no black background, no black bars
-            # If display_height > label_height, it will be cropped by Tkinter
-            # If display_height < label_height, widget will show only ROI (no black bars)
+            # Use resized ROI directly - widget will size to image (compact, no large frame)
             # Convert BGR to RGB
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
             
