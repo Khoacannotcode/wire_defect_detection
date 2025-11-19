@@ -181,33 +181,47 @@ class DetectionGUI:
         self.stats_text = tk.Text(stats_frame, height=4, wrap=tk.WORD, state=tk.DISABLED)
         self.stats_text.pack(fill=tk.BOTH, expand=True)
         
-        # Class color legend (placeholder for future tasks)
+        # Class color legend with visual color swatches
         legend_frame = ttk.LabelFrame(control_frame, text="Class Colors", padding="5")
         legend_frame.pack(fill=tk.X, pady=(5, 0))
         
-        self.legend_text = tk.Text(legend_frame, height=2, wrap=tk.WORD, state=tk.DISABLED)
-        self.legend_text.pack(fill=tk.X)
+        # Create frame for color swatches (visual, human-friendly)
+        self.legend_container = ttk.Frame(legend_frame)
+        self.legend_container.pack(fill=tk.X)
         
         # Update legend if detector is available
         if self.detector:
             self.update_legend()
     
     def update_legend(self):
-        """Update class color legend"""
+        """Update class color legend with visual color swatches (human-friendly)"""
         if not self.detector:
             return
         
-        legend_lines = []
+        # Clear existing legend widgets
+        for widget in self.legend_container.winfo_children():
+            widget.destroy()
+        
+        # Create color swatches for each defect class
         for class_name in self.detector.defect_classes:
             color = self.detector.colors.get(class_name, (128, 128, 128))
             # Convert BGR to RGB for display
             color_rgb = (color[2], color[1], color[0])
-            legend_lines.append(f"{class_name}: RGB{color_rgb}")
-        
-        self.legend_text.config(state=tk.NORMAL)
-        self.legend_text.delete(1.0, tk.END)
-        self.legend_text.insert(1.0, " | ".join(legend_lines))
-        self.legend_text.config(state=tk.DISABLED)
+            hex_color = f"#{color_rgb[0]:02x}{color_rgb[1]:02x}{color_rgb[2]:02x}"
+            
+            # Create frame for each color item
+            item_frame = ttk.Frame(self.legend_container)
+            item_frame.pack(side=tk.LEFT, padx=5, pady=2)
+            
+            # Create color swatch (visual color box)
+            color_canvas = tk.Canvas(item_frame, width=30, height=20, highlightthickness=1, 
+                                    highlightbackground="gray", borderwidth=0)
+            color_canvas.pack(side=tk.LEFT, padx=(0, 5))
+            color_canvas.create_rectangle(2, 2, 28, 18, fill=hex_color, outline="gray", width=1)
+            
+            # Create label with class name
+            class_label = ttk.Label(item_frame, text=class_name, font=("Arial", 9))
+            class_label.pack(side=tk.LEFT)
     
     def start_capture(self):
         """Start camera capture in separate thread"""
@@ -295,22 +309,20 @@ class DetectionGUI:
             return
         
         try:
-            # Resize frame for display
-            display_width = self.config.get('display_width', 800)
-            display_height = self.config.get('display_height', 600)
+            # Get video label size (will be set to fill available space)
+            # Resize ROI frame to fill entire video display widget (no black borders)
+            # Get the actual size of the video label widget
+            self.video_label.update_idletasks()
+            label_width = self.video_label.winfo_width()
+            label_height = self.video_label.winfo_height()
             
-            # Calculate aspect ratio
-            h, w = self.current_frame.shape[:2]
-            aspect = w / h
+            # If label not yet sized, use config defaults
+            if label_width <= 1 or label_height <= 1:
+                label_width = self.config.get('display_width', 800)
+                label_height = self.config.get('display_height', 600)
             
-            if aspect > (display_width / display_height):
-                new_width = display_width
-                new_height = int(display_width / aspect)
-            else:
-                new_height = display_height
-                new_width = int(display_height * aspect)
-            
-            resized = cv2.resize(self.current_frame, (new_width, new_height), 
+            # Resize ROI frame to fill entire label (stretch to fit, no black borders)
+            resized = cv2.resize(self.current_frame, (label_width, label_height), 
                                 interpolation=cv2.INTER_LINEAR)
             
             # Convert BGR to RGB
