@@ -135,11 +135,10 @@ class DetectionGUI:
         # TOP SECTION: Video Display
         # ============================================
         video_frame = ttk.LabelFrame(main_frame, text="Live Video (ROI Cropped)", padding="5")
-        video_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 5))
-        main_frame.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
+        video_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 5))  # Don't fill vertically - size to content
+        main_frame.columnconfigure(0, weight=1)  # Only column expands, not row
         
-        # Video display label - will size to ROI image only (no large 16:9 frame)
+        # Video display label - will size to ROI image only (no large 16:9 frame, no white space)
         self.video_label = ttk.Label(video_frame, text="Initializing camera...", 
                                      background="black", foreground="white")
         self.video_label.pack()  # Don't fill/expand - will size to ROI image only
