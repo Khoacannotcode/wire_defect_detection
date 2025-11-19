@@ -204,8 +204,23 @@ class DetectionGUI:
         self.fps_label = ttk.Label(status_frame, text="FPS: 0.0")
         self.fps_label.pack(side=tk.LEFT, padx=5)
         
+        # Visual alert indicator (red/green)
+        self.defect_alert_label = ttk.Label(status_frame, text="●", font=("Arial", 16), 
+                                           foreground="green")
+        self.defect_alert_label.pack(side=tk.LEFT, padx=5)
+        
+        # Defect status display
+        self.defect_status_label = ttk.Label(status_frame, text="Status: OK", 
+                                            foreground="green", font=("Arial", 9, "bold"))
+        self.defect_status_label.pack(side=tk.LEFT, padx=5)
+        
         self.detection_label = ttk.Label(status_frame, text="Detections: 0")
         self.detection_label.pack(side=tk.LEFT, padx=5)
+        
+        # Defect classes display (active classes in current frame)
+        self.active_classes_label = ttk.Label(status_frame, text="", 
+                                             foreground="gray", font=("Arial", 8))
+        self.active_classes_label.pack(side=tk.LEFT, padx=5)
         
         # Class color legend with active defect highlighting (merged with statistics)
         legend_frame = ttk.LabelFrame(control_frame, text="Defect Classes", padding="5")
@@ -579,6 +594,9 @@ class DetectionGUI:
             self.fps_label.config(text=f"FPS: {self.fps:.1f}")
             self.detection_label.config(text=f"Detections: {len(self.current_detections)}")
             
+            # Update visual alerts and defect status
+            self.update_defect_alerts()
+            
             # Update log display periodically (not every frame for performance)
             current_time = time.time()
             if current_time - self.last_log_update >= self.log_update_interval:
@@ -609,6 +627,49 @@ class DetectionGUI:
         
         except Exception as e:
             print(f"[ERROR] Display update failed: {e}")
+    
+    def update_defect_alerts(self):
+        """Update visual alerts and defect status display"""
+        try:
+            # Filter defect detections (exclude 'normal')
+            defect_detections = [
+                det for det in self.current_detections 
+                if self.detector and det.get('class_name') in self.detector.defect_classes
+            ]
+            
+            # Get active defect classes
+            active_classes = set()
+            for det in defect_detections:
+                active_classes.add(det['class_name'])
+            
+            # Update visual alert (red when defects, green when OK)
+            if defect_detections:
+                self.defect_alert_label.config(foreground="red")
+                self.defect_status_label.config(
+                    text=f"Status: DEFECT ({len(defect_detections)})",
+                    foreground="red"
+                )
+            else:
+                self.defect_alert_label.config(foreground="green")
+                self.defect_status_label.config(
+                    text="Status: OK",
+                    foreground="green"
+                )
+            
+            # Update active classes display
+            if active_classes:
+                classes_str = ", ".join(sorted(active_classes))
+                self.active_classes_label.config(
+                    text=f"Active: {classes_str}",
+                    foreground="red"
+                )
+            else:
+                self.active_classes_label.config(
+                    text="",
+                    foreground="gray"
+                )
+        except Exception as e:
+            print(f"[ERROR] Defect alerts update failed: {e}")
     
     def start_session(self):
         """Start detection session"""
