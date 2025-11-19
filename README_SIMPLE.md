@@ -106,6 +106,41 @@ Optional flags:
 
 Console output prints rolling FPS and class counts every ~10 analysed frames.
 
+## 4.4 Run Desktop GUI Application
+
+### Quick Start (Easiest - Double Click to Run)
+
+**Windows:**
+- Double-click `run_gui.bat` - Script sẽ tự động kích hoạt môi trường và chạy GUI
+
+**Linux/Jetson Nano:**
+- Double-click `run_gui.sh` (hoặc chạy từ terminal: `./run_gui.sh`)
+- Nếu không có quyền execute: `chmod +x run_gui.sh` rồi chạy lại
+
+### Manual Start (Alternative)
+
+```bash
+cd shipping
+source venv/bin/activate
+python gui_detection_runner.py
+```
+
+**GUI Features:**
+- **Layout TD (Top-Down):** Video display ở trên, Control panel ở dưới
+- **ROI Cropping:** Live video chỉ hiển thị vùng ROI (center 80px height × 60% center width)
+- **Real-time Detection:** Hiển thị defects với colored rectangles (minimal bbox)
+- **Session Management:** Start/Stop session buttons (sẽ tích hợp logging ở task sau)
+- **Status Display:** FPS, detection count, statistics
+- **Config Management:** Tự động load/save `config.json`
+
+**Configuration:**
+- File `config.json` được tạo tự động khi chạy GUI lần đầu
+- Có thể chỉnh sửa `config.json` để thay đổi:
+  - Camera source (default: '0')
+  - Camera resolution (width, height, fps)
+  - Display size
+  - Model path
+
 ## 5. Troubleshooting
 | Issue | Fix |
 |-------|------|
@@ -123,6 +158,10 @@ shipping/
 ├── requirements_simple.txt        # Python dependencies
 ├── test_with_images.py            # Batch validation
 ├── run_camera_detection.py        # Live detection entry point (USB / CSI)
+├── gui_detection_runner.py        # Desktop GUI application (Tkinter)
+├── run_gui.bat                    # GUI launcher for Windows (double-click to run)
+├── run_gui.sh                     # GUI launcher for Linux/Jetson Nano (double-click to run)
+├── config.json                    # Configuration file (auto-created when GUI runs)
 ├── test_images/                   # Sample frames
 ├── test_results/                  # Output directory (auto-created)
 └── README_SIMPLE.md               # This guide (Jetson Nano)
