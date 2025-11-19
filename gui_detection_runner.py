@@ -326,10 +326,33 @@ class DetectionGUI:
                 label_width = self.config.get('display_width', 800)
                 label_height = self.config.get('display_height', 600)
             
-            # Resize ROI frame to fill entire video display widget (stretch to fit, no black borders)
-            # User wants to see only ROI region, stretched to fill the entire display area
-            resized = cv2.resize(self.current_frame, (label_width, label_height), 
+            # Resize ROI frame maintaining aspect ratio (fit to GUI, preserve aspect ratio)
+            # User wants ROI to maintain its aspect ratio when resizing to fit GUI
+            frame_height, frame_width = self.current_frame.shape[:2]
+            frame_aspect = frame_width / frame_height if frame_height > 0 else 1.0
+            label_aspect = label_width / label_height if label_height > 0 else 1.0
+            
+            # Calculate resize dimensions maintaining aspect ratio
+            if frame_aspect > label_aspect:
+                # Frame is wider - fit to width
+                display_width = label_width
+                display_height = int(label_width / frame_aspect)
+            else:
+                # Frame is taller - fit to height
+                display_height = label_height
+                display_width = int(label_height * frame_aspect)
+            
+            # Resize maintaining aspect ratio
+            resized = cv2.resize(self.current_frame, (display_width, display_height), 
                                 interpolation=cv2.INTER_LINEAR)
+            
+            # Create black background to center the resized frame
+            display_frame = np.zeros((label_height, label_width, 3), dtype=np.uint8)
+            # Center the resized frame
+            y_offset = (label_height - display_height) // 2
+            x_offset = (label_width - display_width) // 2
+            display_frame[y_offset:y_offset+display_height, x_offset:x_offset+display_width] = resized
+            resized = display_frame
             
             # Convert BGR to RGB
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
