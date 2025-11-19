@@ -48,6 +48,7 @@ class DetectionGUI:
         self.frame_count = 0
         self.last_fps_update = time.time()
         self.legend_items = {}  # Store legend items for highlighting
+        self.roi_aspect_ratio = None  # Store ROI aspect ratio
         
         # Config
         self.config_file = ROOT_DIR / 'config.json'
@@ -138,10 +139,10 @@ class DetectionGUI:
         main_frame.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
         
-        # Video display label
+        # Video display label - will resize to match ROI aspect ratio (no black bars)
         self.video_label = ttk.Label(video_frame, text="Initializing camera...", 
                                      background="black", foreground="white")
-        self.video_label.pack(fill=tk.BOTH, expand=True)
+        self.video_label.pack()  # Don't fill/expand - will size to image
         
         # ============================================
         # BOTTOM SECTION: Control Panel
@@ -326,34 +327,35 @@ class DetectionGUI:
                 label_width = self.config.get('display_width', 800)
                 label_height = self.config.get('display_height', 600)
             
-            # Resize ROI frame maintaining aspect ratio (fit to GUI, preserve aspect ratio)
-            # User wants ROI to maintain its aspect ratio when resizing to fit GUI
+            # Get ROI frame dimensions
             frame_height, frame_width = self.current_frame.shape[:2]
             frame_aspect = frame_width / frame_height if frame_height > 0 else 1.0
-            label_aspect = label_width / label_height if label_height > 0 else 1.0
             
-            # Calculate resize dimensions maintaining aspect ratio
-            if frame_aspect > label_aspect:
-                # Frame is wider - fit to width
-                display_width = label_width
-                display_height = int(label_width / frame_aspect)
-            else:
-                # Frame is taller - fit to height
-                display_height = label_height
-                display_width = int(label_height * frame_aspect)
+            # Store ROI aspect ratio
+            self.roi_aspect_ratio = frame_aspect
             
-            # Resize maintaining aspect ratio
+            # User requirement: ROI is wide and short (long and short rectangle)
+            # Keep ROI aspect ratio, resize to fit GUI widget width, remove black bars
+            # Strategy: Resize ROI to fill available width, maintain aspect ratio, widget sizes to image (no black bars)
+            
+            # Get available width from video_frame (parent of video_label)
+            video_frame_widget = self.video_label.master
+            video_frame_widget.update_idletasks()
+            available_width = video_frame_widget.winfo_width() - 10  # Account for padding
+            
+            # If video_frame not yet sized, use label_width
+            if available_width <= 1:
+                available_width = label_width
+            
+            # Calculate display dimensions: fill available width, maintain ROI aspect ratio
+            display_width = available_width
+            display_height = int(available_width / frame_aspect)
+            
+            # Resize ROI maintaining aspect ratio
             resized = cv2.resize(self.current_frame, (display_width, display_height), 
                                 interpolation=cv2.INTER_LINEAR)
             
-            # Create black background to center the resized frame
-            display_frame = np.zeros((label_height, label_width, 3), dtype=np.uint8)
-            # Center the resized frame
-            y_offset = (label_height - display_height) // 2
-            x_offset = (label_width - display_width) // 2
-            display_frame[y_offset:y_offset+display_height, x_offset:x_offset+display_width] = resized
-            resized = display_frame
-            
+            # No black background - ROI fills the display area completely (no black bars)
             # Convert BGR to RGB
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
             
@@ -361,7 +363,7 @@ class DetectionGUI:
             pil_image = Image.fromarray(rgb_frame)
             photo = ImageTk.PhotoImage(image=pil_image)
             
-            # Update label
+            # Update label - label will size to image (no black bars)
             self.video_label.config(image=photo, text="")
             self.video_label.image = photo  # Keep a reference
             
