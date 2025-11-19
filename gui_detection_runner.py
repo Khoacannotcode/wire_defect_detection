@@ -278,6 +278,9 @@ class DetectionGUI:
                     # Crop annotated frame to ROI for display
                     annotated_roi, _ = self.detector.crop_to_roi(annotated_frame)
                     
+                    # Update detector statistics (detection counts, FPS history)
+                    self.detector.update_stats(detections, processing_time)
+                    
                     # Update FPS
                     self.frame_count += 1
                     current_time = time.time()
