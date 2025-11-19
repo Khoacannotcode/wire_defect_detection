@@ -57,6 +57,7 @@ class DetectionGUI:
         self.legend_items = {}  # Store legend items for highlighting
         self.roi_aspect_ratio = None  # Store ROI aspect ratio
         self.pending_gui_updates = 0  # Track pending GUI updates to prevent queue buildup
+        self.session_duration_update_timer = None  # Timer for session duration updates
         
         # Config
         self.config_file = ROOT_DIR / 'config.json'
@@ -188,6 +189,14 @@ class DetectionGUI:
                                               foreground="gray")
         self.session_status_label.pack(side=tk.LEFT, padx=10)
         
+        # Session duration display
+        self.session_duration_label = ttk.Label(session_frame, text="Duration: 0s", 
+                                                foreground="gray", font=("Arial", 9))
+        self.session_duration_label.pack(side=tk.LEFT, padx=10)
+        
+        # Store session start time for duration calculation
+        self.session_start_time = None
+        
         # Status display
         status_frame = ttk.Frame(control_frame)
         status_frame.pack(fill=tk.X, pady=(0, 5))
@@ -225,10 +234,20 @@ class DetectionGUI:
         # Log labels (will be created/updated dynamically)
         self.log_labels = {}
         
-        # Log file path display
-        self.log_path_label = ttk.Label(control_frame, text="Log file: Not saved", 
+        # Log file path display with open button
+        log_path_frame = ttk.Frame(control_frame)
+        log_path_frame.pack(pady=(5, 0))
+        
+        self.log_path_label = ttk.Label(log_path_frame, text="Log file: Not saved", 
                                        foreground="gray", font=("Arial", 8))
-        self.log_path_label.pack(pady=(5, 0))
+        self.log_path_label.pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.open_log_btn = ttk.Button(log_path_frame, text="Open Log", 
+                                      command=self.open_log_file, state=tk.DISABLED)
+        self.open_log_btn.pack(side=tk.LEFT)
+        
+        # Store current log path
+        self.current_log_path = None
         
         # Update legend and thresholds if detector is available
         if self.detector:
@@ -596,16 +615,33 @@ class DetectionGUI:
         # Reset frame number for new session
         self.frame_number = 0
         self.defect_logger.start_session()
+        self.session_start_time = time.time()
         self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
         self.session_status_label.config(text="Status: Active", foreground="green")
         self.log_path_label.config(text="Log file: Session active...", foreground="green")
+        self.open_log_btn.config(state=tk.DISABLED)  # Disable open button during session
         print("[INFO] Session started")
         self.update_log_display()
+        self.update_session_duration()  # Start duration updates
     
     def stop_session(self):
         """Stop detection session"""
+        # Stop duration updates
+        if self.session_duration_update_timer:
+            self.root.after_cancel(self.session_duration_update_timer)
+            self.session_duration_update_timer = None
+        
         self.defect_logger.stop_session()
+        
+        # Calculate final session duration
+        if self.session_start_time:
+            duration = time.time() - self.session_start_time
+            self.session_duration_label.config(
+                text=f"Duration: {duration:.1f}s ({duration/60:.1f}min)",
+                foreground="gray"
+            )
+            self.session_start_time = None
         
         # Save log file
         log_path = self.defect_logger.save_session_log()
@@ -614,21 +650,69 @@ class DetectionGUI:
         self.stop_btn.config(state=tk.DISABLED)
         self.session_status_label.config(text="Status: Stopped", foreground="gray")
         
-        # Display log file path
+        # Display log file path and enable open button
         if log_path:
+            self.current_log_path = log_path
             self.log_path_label.config(
-                text=f"Log file: {log_path.name} (saved to {log_path.parent})",
+                text=f"Log file: {log_path.name}",
                 foreground="blue"
             )
+            self.open_log_btn.config(state=tk.NORMAL)  # Enable open button
             print(f"[INFO] Session log saved: {log_path}")
         else:
+            self.current_log_path = None
             self.log_path_label.config(
                 text="Log file: Failed to save",
                 foreground="red"
             )
+            self.open_log_btn.config(state=tk.DISABLED)
         
         print("[INFO] Session stopped")
         self.update_log_display()
+    
+    def update_session_duration(self):
+        """Update session duration display"""
+        if self.defect_logger.session_active and self.session_start_time:
+            duration = time.time() - self.session_start_time
+            minutes = int(duration // 60)
+            seconds = int(duration % 60)
+            if minutes > 0:
+                self.session_duration_label.config(
+                    text=f"Duration: {minutes}m {seconds}s",
+                    foreground="green"
+                )
+            else:
+                self.session_duration_label.config(
+                    text=f"Duration: {seconds}s",
+                    foreground="green"
+                )
+            # Schedule next update
+            self.session_duration_update_timer = self.root.after(1000, self.update_session_duration)
+        else:
+            self.session_duration_label.config(text="Duration: 0s", foreground="gray")
+    
+    def open_log_file(self):
+        """Open log file in default system application"""
+        if not self.current_log_path or not self.current_log_path.exists():
+            messagebox.showerror("Error", "Log file not found or not saved yet")
+            return
+        
+        try:
+            import platform
+            import subprocess
+            
+            system = platform.system()
+            if system == "Windows":
+                os.startfile(str(self.current_log_path))
+            elif system == "Darwin":  # macOS
+                subprocess.run(["open", str(self.current_log_path)])
+            else:  # Linux
+                subprocess.run(["xdg-open", str(self.current_log_path)])
+            
+            print(f"[INFO] Opened log file: {self.current_log_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open log file: {e}")
+            print(f"[ERROR] Failed to open log file: {e}")
     
     def on_closing(self):
         """Handle window close event"""
