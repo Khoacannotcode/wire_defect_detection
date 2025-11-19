@@ -324,9 +324,32 @@ class DetectionGUI:
                 label_width = self.config.get('display_width', 800)
                 label_height = self.config.get('display_height', 600)
             
-            # Resize ROI frame to fill entire label (stretch to fit, no black borders)
-            resized = cv2.resize(self.current_frame, (label_width, label_height), 
+            # Resize ROI frame maintaining aspect ratio (fit width, preserve aspect)
+            # Video is horizontal rectangle, so fit to label width and maintain aspect ratio
+            frame_height, frame_width = self.current_frame.shape[:2]
+            frame_aspect = frame_width / frame_height if frame_height > 0 else 1.0
+            
+            # Calculate resize dimensions maintaining aspect ratio
+            if frame_aspect > (label_width / label_height):
+                # Frame is wider - fit to width
+                display_width = label_width
+                display_height = int(label_width / frame_aspect)
+            else:
+                # Frame is taller - fit to height
+                display_height = label_height
+                display_width = int(label_height * frame_aspect)
+            
+            # Resize maintaining aspect ratio
+            resized = cv2.resize(self.current_frame, (display_width, display_height), 
                                 interpolation=cv2.INTER_LINEAR)
+            
+            # Create black background to center the resized frame
+            display_frame = np.zeros((label_height, label_width, 3), dtype=np.uint8)
+            # Center the resized frame
+            y_offset = (label_height - display_height) // 2
+            x_offset = (label_width - display_width) // 2
+            display_frame[y_offset:y_offset+display_height, x_offset:x_offset+display_width] = resized
+            resized = display_frame
             
             # Convert BGR to RGB
             rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
@@ -343,13 +366,22 @@ class DetectionGUI:
             self.fps_label.config(text=f"FPS: {self.fps:.1f}")
             self.detection_label.config(text=f"Detections: {len(self.current_detections)}")
             
-            # Update statistics
+            # Update statistics - highlight active defects (currently visible in frame)
             if self.detector:
+                # Get active defect classes from current detections
+                active_defects = set()
+                for det in self.current_detections:
+                    if det['class_name'] in self.detector.defect_classes:
+                        active_defects.add(det['class_name'])
+                
+                # Build statistics with highlighting for active defects
                 stats_lines = []
-                stats_lines.append(f"Total detections: {sum(self.detector.detection_counts.values())}")
-                for class_name in self.detector.defect_classes:
-                    count = self.detector.detection_counts.get(class_name, 0)
-                    stats_lines.append(f"{class_name}: {count}")
+                if active_defects:
+                    stats_lines.append("Active Defects (currently visible):")
+                    for class_name in sorted(active_defects):
+                        stats_lines.append(f"  ⚠ {class_name}")
+                else:
+                    stats_lines.append("No defects detected")
                 
                 self.stats_text.config(state=tk.NORMAL)
                 self.stats_text.delete(1.0, tk.END)
