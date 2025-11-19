@@ -32,6 +32,23 @@ except ImportError:
     print("Install with: pip install onnxruntime")
     sys.exit(1)
 
+# Import visualization standards
+try:
+    # Try to import from learning_based directory
+    sys.path.insert(0, str(Path(__file__).parent.parent / 'learning_based'))
+    from visualization_standards import get_class_color
+    VISUALIZATION_STANDARDS_AVAILABLE = True
+except ImportError:
+    print("⚠️ Warning: visualization_standards.py not found, using default colors")
+    VISUALIZATION_STANDARDS_AVAILABLE = False
+    def get_class_color(class_name):
+        """Fallback color function"""
+        color_map = {
+            'NOK': (0, 165, 255), 'breaks': (0, 255, 255), 'damage': (0, 0, 255),
+            'drops': (128, 128, 128), 'normal': (0, 128, 0), 'shift': (255, 0, 0)
+        }
+        return color_map.get(class_name, (128, 128, 128))
+
 
 class SimpleWireDetector:
     """Simple wire defect detector for testing"""
@@ -76,22 +93,46 @@ class SimpleWireDetector:
         self.using_cuda = 'CUDAExecutionProvider' in self.session.get_providers()
         self.is_aarch64 = is_aarch64
         
-        # Model settings
-        self.input_size = 416
+        # Model settings - Updated for 6-class model (640x640 input)
+        self.input_size = 640  # Updated from 416 to 640 for new model
         self.crop_height = 80
         self.crop_width_ratio = 0.6
-        self.conf_threshold = 0.22  # Fine-tuned threshold to get closer to 19 detections
+        self.conf_threshold = 0.22  # Default threshold
         self.roi_color = (0, 255, 255)
         
-        # Class info
-        self.class_names = ['fail', 'pagan', 'valid']
-        self.colors = {
-            'fail': (0, 0, 255),    # Red
-            'pagan': (255, 0, 0),   # Blue  
-            'valid': (0, 255, 0)    # Green
-        }
+        # Load class names dynamically
+        self.class_names = self._load_class_names()
+        
+        # Build color map using visualization standards
+        self.colors = {}
+        for class_name in self.class_names:
+            self.colors[class_name] = get_class_color(class_name)
+        
+        # Defect classes (exclude "normal" from visualization)
+        self.defect_classes = [cls for cls in self.class_names if cls != 'normal']
         
         print("[OK] Model loaded successfully")
+        print(f"[INFO] Classes loaded: {self.class_names}")
+        print(f"[INFO] Defect classes (for visualization): {self.defect_classes}")
+    
+    def _load_class_names(self):
+        """Load class names from config file or default to 6-class model classes"""
+        # Try to load from classes.txt in learning_based
+        classes_file = Path(__file__).parent.parent / 'learning_based' / 'labels' / 'classes.txt'
+        if classes_file.exists():
+            try:
+                with open(classes_file, 'r', encoding='utf-8') as f:
+                    class_names = [line.strip() for line in f if line.strip()]
+                if class_names:
+                    print(f"[INFO] Loaded classes from {classes_file}: {class_names}")
+                    return class_names
+            except Exception as e:
+                print(f"[WARN] Failed to load classes from {classes_file}: {e}")
+        
+        # Default to 6-class model classes
+        default_classes = ['NOK', 'breaks', 'damage', 'drops', 'normal', 'shift']
+        print(f"[INFO] Using default 6-class model classes: {default_classes}")
+        return default_classes
     
     def crop_to_roi(self, image):
         """Crop image to central ROI (vertical band + side trim) used during training."""
@@ -230,24 +271,36 @@ class SimpleWireDetector:
         return image
 
     def draw_detections(self, image, detections, roi=None):
+        """
+        Draw ROI outline plus minimal bounding boxes (colored rectangles only, no text).
+        Only displays defect classes (excludes 'normal').
+        Optimized for FPS performance.
+        """
         annotated = image
         if roi:
             annotated = self.draw_roi(annotated, roi)
 
-        for det in detections:
-            bbox = det['bbox']
-            class_name = det['class_name']
-            confidence = det['confidence']
-            color = self.colors[class_name]
+        # Filter detections: only show defect classes (exclude 'normal')
+        defect_detections = [
+            det for det in detections 
+            if det['class_name'] in self.defect_classes
+        ]
 
-            cv2.rectangle(annotated, (bbox[0], bbox[1]), (bbox[2], bbox[3]), color, 2)
-
-            label = f"{class_name}: {confidence:.2f}"
-            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
-            cv2.rectangle(annotated, (bbox[0], bbox[1] - label_size[1] - 10),
-                          (bbox[0] + label_size[0], bbox[1]), color, -1)
-            cv2.putText(annotated, label, (bbox[0], bbox[1] - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        # Draw minimal bboxes: colored rectangles only, no text labels
+        for detection in defect_detections:
+            bbox = detection['bbox']
+            class_name = detection['class_name']
+            
+            # Get color from visualization standards
+            color = self.colors.get(class_name, (128, 128, 128))
+            
+            # Draw minimal bounding box (rectangle only, no text)
+            # Using thickness 2 for visibility
+            cv2.rectangle(annotated, 
+                         (int(bbox[0]), int(bbox[1])), 
+                         (int(bbox[2]), int(bbox[3])), 
+                         color, 2)
+        
         return annotated
     
     def preprocess(self, image):
@@ -368,15 +421,8 @@ class SimpleWireDetector:
     def detect_image(self, image_path):
         """Detect defects in a single image"""
         processing_start_time = time.time()
-
-        # Expected results for validation (from learning_based)
-        expected_results = {
-            '0bfb41.jpg': [('pagan', 0.912), ('valid', 0.851), ('valid', 0.808), ('fail', 0.780)],
-            '1d42d9.jpg': [('pagan', 0.822), ('fail', 0.738), ('fail', 0.718), ('valid', 0.680)],
-            '2cb5b3.jpg': [('valid', 0.865), ('valid', 0.791), ('valid', 0.439)],
-            '2cda46.jpg': [('valid', 0.908), ('valid', 0.742), ('valid', 0.711), ('valid', 0.676)],
-            '3ebacb.jpg': [('valid', 0.909), ('valid', 0.751), ('valid', 0.751), ('valid', 0.700)]
-        }
+        
+        # Note: expected_results removed - model v2 has 6 classes, doesn't match old expected results
         
         # Load image
         image = cv2.imread(str(image_path))
@@ -390,7 +436,7 @@ class SimpleWireDetector:
         cropped_image, roi = self.crop_to_roi(image)
         # print(f"  Cropped image: {cropped_image.shape[1]}x{cropped_image.shape[0]}")
         
-        # Preprocess (resize to 416x416)
+        # Preprocess (resize to 640x640)
         input_data, ratio, dwdh = self.preprocess(cropped_image)
         
         # Run inference
@@ -399,23 +445,7 @@ class SimpleWireDetector:
         # Postprocess
         detections = self.postprocess(outputs[0], ratio, dwdh, cropped_image.shape)
         
-        # Compare with expected results
-        image_name = image_path.name if hasattr(image_path, 'name') else str(image_path).split('/')[-1]
-        if image_name in expected_results:
-            expected = expected_results[image_name]
-            print(f"  EXPECTED ({len(expected)}): {[(cls, f'{conf:.3f}') for cls, conf in expected]}")
-            
-            # Count class differences
-            expected_classes = [cls for cls, _ in expected]
-            actual_classes = [det['class_name'] for det in detections]
-            
-            exp_count = {'fail': expected_classes.count('fail'), 'pagan': expected_classes.count('pagan'), 'valid': expected_classes.count('valid')}
-            act_count = {'fail': actual_classes.count('fail'), 'pagan': actual_classes.count('pagan'), 'valid': actual_classes.count('valid')}
-            
-            print(f"  EXPECTED classes: fail={exp_count['fail']}, pagan={exp_count['pagan']}, valid={exp_count['valid']}")
-            print(f"  ACTUAL classes:   fail={act_count['fail']}, pagan={act_count['pagan']}, valid={act_count['valid']}")
-        
-        # Scale detections from 416x416 to original image coordinates
+        # Scale detections from 640x640 to original image coordinates
         scaled_detections = []
         for det in detections:
             clipped = self.clip_bbox_to_roi(det['bbox'], roi)
@@ -492,7 +522,8 @@ def test_images():
     # Test each image
     total_detections = 0
     total_time = 0
-    class_counts = {'fail': 0, 'pagan': 0, 'valid': 0}
+    # Dynamic class counts based on loaded classes
+    class_counts = {cls: 0 for cls in detector.class_names}
     TEST_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     
     for i, image_path in enumerate(image_files, 1):
