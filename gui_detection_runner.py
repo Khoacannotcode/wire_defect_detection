@@ -38,7 +38,8 @@ class DetectionGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Wire Defect Detection - Real-time Monitor")
-        self.root.geometry("1024x768")
+        # Increased height by 40%: 768 * 1.4 = 1075.2 ≈ 1080
+        self.root.geometry("1024x1080")
         
         # State variables
         self.detector = None
@@ -215,11 +216,11 @@ class DetectionGUI:
         
         # Real-time Log/Statistics section
         log_frame = ttk.LabelFrame(control_frame, text="Real-time Log & Statistics", padding="5")
-        log_frame.pack(fill=tk.X, pady=(5, 0))
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))  # Allow expansion
         
         # Create container for log display (no scrollbar - full content visible)
         self.log_container = ttk.Frame(log_frame)
-        self.log_container.pack(fill=tk.X)
+        self.log_container.pack(fill=tk.BOTH, expand=True)  # Allow expansion
         
         # Log labels (will be created/updated dynamically)
         self.log_labels = {}
@@ -748,6 +749,10 @@ class DetectionGUI:
             
             if stats['active_cluster']:
                 cluster = stats['active_cluster']
+                # Hide "no cluster" message if exists
+                if 'no_cluster' in self.log_widgets:
+                    self.log_widgets['no_cluster'].grid_remove()
+                
                 # Create/reuse cluster widgets
                 cluster_widgets = ['cluster_duration', 'cluster_frames', 'cluster_defects', 'cluster_classes']
                 for i, key in enumerate(cluster_widgets):
@@ -760,13 +765,23 @@ class DetectionGUI:
                 self.log_widgets['cluster_duration'].config(text=f"Duration: {cluster['duration']:.2f}s")
                 self.log_widgets['cluster_frames'].config(text=f"Frames: {cluster['frame_count']}")
                 self.log_widgets['cluster_defects'].config(text=f"Defects: {cluster['defect_count']}")
-                self.log_widgets['cluster_classes'].config(text=f"Classes: {', '.join(cluster['classes'].keys())}")
-                row += 1
+                classes_str = ', '.join(cluster['classes'].keys()) if cluster['classes'] else 'None'
+                self.log_widgets['cluster_classes'].config(text=f"Classes: {classes_str}")
             else:
                 # Hide cluster detail widgets
                 for key in ['cluster_duration', 'cluster_frames', 'cluster_defects', 'cluster_classes']:
                     if key in self.log_widgets:
                         self.log_widgets[key].grid_remove()
+                
+                # Show "no cluster" message
+                if 'no_cluster' not in self.log_widgets:
+                    self.log_widgets['no_cluster'] = ttk.Label(self.log_container, 
+                                                              text="No active cluster",
+                                                              font=("Courier", 9))
+                    self.log_widgets['no_cluster'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+                else:
+                    self.log_widgets['no_cluster'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+                row += 1
             
             # Stripe timing section (reuse widgets)
             if 'timing_header' not in self.log_widgets:
