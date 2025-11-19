@@ -2,9 +2,8 @@
 
 ## Quick Start
 
-### Running the GUI Application
+### Running the GUI Application on Linux/Jetson Nano
 
-#### On Linux/Jetson Nano:
 ```bash
 cd shipping
 chmod +x run_gui.sh
@@ -17,12 +16,6 @@ The script will:
 3. Display any errors if the application fails
 
 **Note:** If you see "Virtual environment not found", run `setup_environment.sh` first to create the virtual environment.
-
-#### On Windows:
-```bash
-cd shipping
-python gui_detection_runner.py
-```
 
 ## GUI Overview
 
@@ -129,8 +122,7 @@ The GUI application provides real-time wire defect detection with the following 
 
 **FPS Optimization:**
 - GUI is optimized for 15-30 FPS on Jetson Nano
-- If FPS is low, the system automatically adjusts update frequencies
-- Log display updates every 2 seconds (not every frame)
+- Log display updates every 1 second (not every frame)
 - Visual alerts update every 200ms
 - Legend highlighting updates every 300ms
 
@@ -198,7 +190,7 @@ The GUI application provides real-time wire defect detection with the following 
 
 ## Keyboard Shortcuts
 
-- **Close Window**: Click X button or Alt+F4 (Windows)
+- **Close Window**: Click X button
 - All operations are mouse-based (no keyboard shortcuts needed)
 
 ## Best Practices

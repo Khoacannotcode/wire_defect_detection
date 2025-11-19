@@ -52,7 +52,7 @@ class DetectionGUI:
         self.frame_count = 0
         self.last_fps_update = time.time()
         self.last_log_update = time.time()
-        self.log_update_interval = 2.0  # Update log display every 2 seconds (optimized for FPS)
+        self.log_update_interval = 1.0  # Update log display every 1 second
         self.log_widgets = {}  # Store log widgets for reuse (avoid destroy/create)
         self.legend_items = {}  # Store legend items for highlighting
         self.roi_aspect_ratio = None  # Store ROI aspect ratio
@@ -520,16 +520,12 @@ class DetectionGUI:
             
             # Update GUI from main thread (throttle to prevent queue buildup)
             # Only schedule if not too many pending updates
-            if self.pending_gui_updates < 1:  # Reduced from 2 to 1 for better FPS
+            if self.pending_gui_updates < 2:
                 self.pending_gui_updates += 1
                 self.root.after(0, lambda: self._safe_update_display())
             
-            # Control frame rate (optimized for 15-30 FPS target)
-            # Adaptive sleep: if FPS is low, increase sleep time
-            if self.fps > 0 and self.fps < 15:
-                time.sleep(0.05)  # ~20 FPS max when FPS is low
-            else:
-                time.sleep(0.033)  # ~30 FPS max normally
+            # Minimal sleep to prevent CPU spinning (let system handle scheduling)
+            time.sleep(0.01)  # Minimal sleep, system will handle scheduling
     
     def _safe_update_display(self):
         """Wrapper for update_display with exception handling and pending counter"""
