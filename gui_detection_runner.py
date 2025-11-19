@@ -51,9 +51,11 @@ class DetectionGUI:
         self.frame_count = 0
         self.last_fps_update = time.time()
         self.last_log_update = time.time()
-        self.log_update_interval = 0.5  # Update log display every 0.5 seconds
+        self.log_update_interval = 1.0  # Update log display every 1 second (reduced frequency)
+        self.log_widgets = {}  # Store log widgets for reuse (avoid destroy/create)
         self.legend_items = {}  # Store legend items for highlighting
         self.roi_aspect_ratio = None  # Store ROI aspect ratio
+        self.pending_gui_updates = 0  # Track pending GUI updates to prevent queue buildup
         
         # Config
         self.config_file = ROOT_DIR / 'config.json'
@@ -477,11 +479,23 @@ class DetectionGUI:
                 # Still increment frame number
                 self.frame_number += 1
             
-            # Update GUI from main thread
-            self.root.after(0, self.update_display)
+            # Update GUI from main thread (throttle to prevent queue buildup)
+            # Only schedule if not too many pending updates
+            if self.pending_gui_updates < 2:
+                self.pending_gui_updates += 1
+                self.root.after(0, lambda: self._safe_update_display())
             
             # Control frame rate (target ~15-30 FPS)
             time.sleep(0.033)  # ~30 FPS max
+    
+    def _safe_update_display(self):
+        """Wrapper for update_display with exception handling and pending counter"""
+        try:
+            self.update_display()
+        except Exception as e:
+            print(f"[ERROR] Display update exception: {e}")
+        finally:
+            self.pending_gui_updates = max(0, self.pending_gui_updates - 1)
     
     def update_display(self):
         """Update video display (called from main thread)"""
@@ -642,149 +656,168 @@ class DetectionGUI:
             return
         
         try:
+            # Check if container still exists (might be destroyed)
+            try:
+                self.log_container.winfo_exists()
+            except:
+                return  # Container destroyed, skip update
+            
             # Get session statistics
             stats = self.defect_logger.get_session_stats()
             
-            # Clear existing labels
-            for widget in self.log_container.winfo_children():
-                widget.destroy()
-            self.log_labels.clear()
+            # Reuse widgets instead of destroy/create to avoid memory churn
+            widget_keys = [
+                'header', 'session_id', 'frames', 'summary_header', 'total_defects', 'total_clusters',
+                'cluster_header', 'cluster_duration', 'cluster_frames', 'cluster_defects', 'cluster_classes',
+                'timing_header', 'timing_duration', 'timing_frames',
+                'class_header'
+            ]
+            
+            # Clear widgets that are no longer needed
+            existing_widgets = set(self.log_widgets.keys())
+            needed_widgets = set(widget_keys)
+            for key in existing_widgets - needed_widgets:
+                if key in self.log_widgets:
+                    try:
+                        self.log_widgets[key].destroy()
+                    except:
+                        pass
+                    del self.log_widgets[key]
             
             row = 0
             
-            # Session status header
-            if stats['session_active']:
-                header_label = ttk.Label(self.log_container, text="=== SESSION ACTIVE ===",
-                                        font=("Courier", 9, "bold"), foreground="blue")
-                header_label.grid(row=row, column=0, sticky=tk.W, pady=(0, 2))
+            # Session status header (reuse widget if exists)
+            header_text = "=== SESSION ACTIVE ===" if stats['session_active'] else "=== SESSION STOPPED ==="
+            header_color = "blue" if stats['session_active'] else "gray"
+            
+            if 'header' not in self.log_widgets:
+                self.log_widgets['header'] = ttk.Label(self.log_container, 
+                                                      font=("Courier", 9, "bold"))
+                self.log_widgets['header'].grid(row=row, column=0, sticky=tk.W, pady=(0, 2))
+            self.log_widgets['header'].config(text=header_text, foreground=header_color)
+            row += 1
+            
+            # Session ID (reuse widget)
+            if stats['session_id']:
+                if 'session_id' not in self.log_widgets:
+                    self.log_widgets['session_id'] = ttk.Label(self.log_container, 
+                                                              font=("Courier", 9))
+                    self.log_widgets['session_id'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                self.log_widgets['session_id'].config(text=f"Session ID: {stats['session_id']}")
                 row += 1
-                
-                session_id_label = ttk.Label(self.log_container, 
-                                            text=f"Session ID: {stats['session_id']}",
-                                            font=("Courier", 9))
-                session_id_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
-                row += 1
-            else:
-                header_label = ttk.Label(self.log_container, text="=== SESSION STOPPED ===",
-                                        font=("Courier", 9, "bold"), foreground="gray")
-                header_label.grid(row=row, column=0, sticky=tk.W, pady=(0, 2))
-                row += 1
-                
-                if stats['session_id']:
-                    session_id_label = ttk.Label(self.log_container, 
-                                                text=f"Session ID: {stats['session_id']}",
-                                                font=("Courier", 9))
-                    session_id_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
-                    row += 1
+            elif 'session_id' in self.log_widgets:
+                self.log_widgets['session_id'].grid_remove()
             
-            frames_label = ttk.Label(self.log_container, 
-                                    text=f"Frames Processed: {stats['frames_processed']}",
-                                    font=("Courier", 9))
-            frames_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+            # Frames processed (reuse widget)
+            if 'frames' not in self.log_widgets:
+                self.log_widgets['frames'] = ttk.Label(self.log_container, font=("Courier", 9))
+                self.log_widgets['frames'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+            self.log_widgets['frames'].config(text=f"Frames Processed: {stats['frames_processed']}")
+            self.log_widgets['frames'].grid()
             row += 1
             
-            # Defect summary section
-            summary_header = ttk.Label(self.log_container, text="--- Defect Summary ---",
-                                      font=("Courier", 9, "bold"), foreground="darkgreen")
-            summary_header.grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
+            # Defect summary section (reuse widgets)
+            if 'summary_header' not in self.log_widgets:
+                self.log_widgets['summary_header'] = ttk.Label(self.log_container, 
+                                                               font=("Courier", 9, "bold"), 
+                                                               foreground="darkgreen")
+                self.log_widgets['summary_header'].grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
+            self.log_widgets['summary_header'].config(text="--- Defect Summary ---")
             row += 1
             
-            total_defects_label = ttk.Label(self.log_container, 
-                                           text=f"Total Defects: {stats['total_defects']}",
-                                           font=("Courier", 9))
-            total_defects_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+            if 'total_defects' not in self.log_widgets:
+                self.log_widgets['total_defects'] = ttk.Label(self.log_container, font=("Courier", 9))
+                self.log_widgets['total_defects'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+            self.log_widgets['total_defects'].config(text=f"Total Defects: {stats['total_defects']}")
             row += 1
             
-            total_clusters_label = ttk.Label(self.log_container, 
-                                            text=f"Total Clusters: {stats['total_clusters']}",
-                                            font=("Courier", 9))
-            total_clusters_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+            if 'total_clusters' not in self.log_widgets:
+                self.log_widgets['total_clusters'] = ttk.Label(self.log_container, font=("Courier", 9))
+                self.log_widgets['total_clusters'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+            self.log_widgets['total_clusters'].config(text=f"Total Clusters: {stats['total_clusters']}")
             row += 1
             
-            # Active cluster section
-            cluster_header = ttk.Label(self.log_container, text="--- Active Cluster ---",
-                                      font=("Courier", 9, "bold"), foreground="darkgreen")
-            cluster_header.grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
+            # Active cluster section (reuse widgets)
+            if 'cluster_header' not in self.log_widgets:
+                self.log_widgets['cluster_header'] = ttk.Label(self.log_container, 
+                                                              font=("Courier", 9, "bold"), 
+                                                              foreground="darkgreen")
+                self.log_widgets['cluster_header'].grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
+            self.log_widgets['cluster_header'].config(text="--- Active Cluster ---")
             row += 1
             
             if stats['active_cluster']:
                 cluster = stats['active_cluster']
-                cluster_duration_label = ttk.Label(self.log_container, 
-                                                  text=f"Duration: {cluster['duration']:.2f}s",
-                                                  font=("Courier", 9))
-                cluster_duration_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
-                row += 1
+                # Create/reuse cluster widgets
+                cluster_widgets = ['cluster_duration', 'cluster_frames', 'cluster_defects', 'cluster_classes']
+                for i, key in enumerate(cluster_widgets):
+                    if key not in self.log_widgets:
+                        self.log_widgets[key] = ttk.Label(self.log_container, font=("Courier", 9))
+                    self.log_widgets[key].grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                    row += 1
                 
-                cluster_frames_label = ttk.Label(self.log_container, 
-                                                text=f"Frames: {cluster['frame_count']}",
-                                                font=("Courier", 9))
-                cluster_frames_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
-                row += 1
-                
-                cluster_defects_label = ttk.Label(self.log_container, 
-                                                 text=f"Defects: {cluster['defect_count']}",
-                                                 font=("Courier", 9))
-                cluster_defects_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
-                row += 1
-                
-                cluster_classes_label = ttk.Label(self.log_container, 
-                                                 text=f"Classes: {', '.join(cluster['classes'].keys())}",
-                                                 font=("Courier", 9))
-                cluster_classes_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+                # Update widget text
+                self.log_widgets['cluster_duration'].config(text=f"Duration: {cluster['duration']:.2f}s")
+                self.log_widgets['cluster_frames'].config(text=f"Frames: {cluster['frame_count']}")
+                self.log_widgets['cluster_defects'].config(text=f"Defects: {cluster['defect_count']}")
+                self.log_widgets['cluster_classes'].config(text=f"Classes: {', '.join(cluster['classes'].keys())}")
                 row += 1
             else:
-                no_cluster_label = ttk.Label(self.log_container, text="No active cluster",
-                                            font=("Courier", 9))
-                no_cluster_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
-                row += 1
+                # Hide cluster detail widgets
+                for key in ['cluster_duration', 'cluster_frames', 'cluster_defects', 'cluster_classes']:
+                    if key in self.log_widgets:
+                        self.log_widgets[key].grid_remove()
             
-            # Stripe timing section
-            timing_header = ttk.Label(self.log_container, text="--- Stripe Timing ---",
-                                     font=("Courier", 9, "bold"), foreground="darkgreen")
-            timing_header.grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
+            # Stripe timing section (reuse widgets)
+            if 'timing_header' not in self.log_widgets:
+                self.log_widgets['timing_header'] = ttk.Label(self.log_container, 
+                                                             font=("Courier", 9, "bold"), 
+                                                             foreground="darkgreen")
+                self.log_widgets['timing_header'].grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
+            self.log_widgets['timing_header'].config(text="--- Stripe Timing ---")
             row += 1
             
             if stats['stripe_timing']:
                 timing = stats['stripe_timing']
-                timing_duration_label = ttk.Label(self.log_container, 
-                                                text=f"Duration: {timing['duration']:.3f}s",
-                                                font=("Courier", 9))
-                timing_duration_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                if 'timing_duration' not in self.log_widgets:
+                    self.log_widgets['timing_duration'] = ttk.Label(self.log_container, font=("Courier", 9))
+                    self.log_widgets['timing_duration'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                self.log_widgets['timing_duration'].config(text=f"Duration: {timing['duration']:.3f}s")
+                self.log_widgets['timing_duration'].grid()
                 row += 1
                 
-                timing_frames_label = ttk.Label(self.log_container, 
-                                               text=f"Frames: {timing['start_frame']} → {timing['end_frame']}",
-                                               font=("Courier", 9))
-                timing_frames_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+                if 'timing_frames' not in self.log_widgets:
+                    self.log_widgets['timing_frames'] = ttk.Label(self.log_container, font=("Courier", 9))
+                    self.log_widgets['timing_frames'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+                self.log_widgets['timing_frames'].config(text=f"Frames: {timing['start_frame']} → {timing['end_frame']}")
+                self.log_widgets['timing_frames'].grid()
                 row += 1
             else:
-                no_timing_label = ttk.Label(self.log_container, text="No normal stripes detected",
-                                            font=("Courier", 9))
-                no_timing_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
-                row += 1
+                for key in ['timing_duration', 'timing_frames']:
+                    if key in self.log_widgets:
+                        self.log_widgets[key].grid_remove()
             
-            # Per-class counts section
-            class_header = ttk.Label(self.log_container, text="--- Per-Class Counts ---",
-                                    font=("Courier", 9, "bold"), foreground="darkgreen")
-            class_header.grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
-            row += 1
+            # Per-class counts section (simplified - only show if needed)
+            # Note: Per-class counts can be many, so we'll keep it simple
+            if 'class_header' not in self.log_widgets:
+                self.log_widgets['class_header'] = ttk.Label(self.log_container, 
+                                                            font=("Courier", 9, "bold"), 
+                                                            foreground="darkgreen")
+                self.log_widgets['class_header'].grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
             
             if stats['class_counts']:
-                for class_name, count in sorted(stats['class_counts'].items(), 
-                                               key=lambda x: x[1], reverse=True):
-                    class_label = ttk.Label(self.log_container, 
-                                           text=f"{class_name}: {count}",
-                                           font=("Courier", 9))
-                    class_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
-                    row += 1
+                class_summary = ", ".join([f"{k}:{v}" for k, v in sorted(stats['class_counts'].items(), 
+                                                                        key=lambda x: x[1], reverse=True)[:5]])
+                self.log_widgets['class_header'].config(text=f"--- Per-Class Counts: {class_summary} ---")
+                self.log_widgets['class_header'].grid()
             else:
-                no_class_label = ttk.Label(self.log_container, text="No defects detected",
-                                         font=("Courier", 9))
-                no_class_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
-                row += 1
+                self.log_widgets['class_header'].config(text="--- Per-Class Counts: No defects ---")
+                self.log_widgets['class_header'].grid()
             
         except Exception as e:
             print(f"[ERROR] Failed to update log display: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 def main():
