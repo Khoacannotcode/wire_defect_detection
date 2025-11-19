@@ -212,22 +212,14 @@ class DetectionGUI:
         
         # Real-time Log/Statistics section
         log_frame = ttk.LabelFrame(control_frame, text="Real-time Log & Statistics", padding="5")
-        log_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
+        log_frame.pack(fill=tk.X, pady=(5, 0))
         
-        # Create scrollable text widget for logs
-        log_container = ttk.Frame(log_frame)
-        log_container.pack(fill=tk.BOTH, expand=True)
+        # Create container for log display (no scrollbar - full content visible)
+        self.log_container = ttk.Frame(log_frame)
+        self.log_container.pack(fill=tk.X)
         
-        # Scrollbar for log text
-        log_scrollbar = ttk.Scrollbar(log_container)
-        log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Text widget for real-time logs
-        self.log_text = tk.Text(log_container, height=8, wrap=tk.WORD, 
-                               yscrollcommand=log_scrollbar.set,
-                               font=("Courier", 9))
-        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        log_scrollbar.config(command=self.log_text.yview)
+        # Log labels (will be created/updated dynamically)
+        self.log_labels = {}
         
         # Log file path display
         self.log_path_label = ttk.Label(control_frame, text="Log file: Not saved", 
@@ -635,71 +627,151 @@ class DetectionGUI:
         self.root.destroy()
     
     def update_log_display(self):
-        """Update real-time log display with current statistics"""
-        if not hasattr(self, 'log_text'):
+        """Update real-time log display with current statistics (full content, no scroll)"""
+        if not hasattr(self, 'log_container'):
             return
         
         try:
             # Get session statistics
             stats = self.defect_logger.get_session_stats()
             
-            # Clear and update log text
-            self.log_text.delete(1.0, tk.END)
+            # Clear existing labels
+            for widget in self.log_container.winfo_children():
+                widget.destroy()
+            self.log_labels.clear()
             
-            # Session status
+            row = 0
+            
+            # Session status header
             if stats['session_active']:
-                self.log_text.insert(tk.END, "=== SESSION ACTIVE ===\n", "header")
-                self.log_text.insert(tk.END, f"Session ID: {stats['session_id']}\n")
-                self.log_text.insert(tk.END, f"Frames Processed: {stats['frames_processed']}\n\n")
+                header_label = ttk.Label(self.log_container, text="=== SESSION ACTIVE ===",
+                                        font=("Courier", 9, "bold"), foreground="blue")
+                header_label.grid(row=row, column=0, sticky=tk.W, pady=(0, 2))
+                row += 1
+                
+                session_id_label = ttk.Label(self.log_container, 
+                                            text=f"Session ID: {stats['session_id']}",
+                                            font=("Courier", 9))
+                session_id_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                row += 1
             else:
-                self.log_text.insert(tk.END, "=== SESSION STOPPED ===\n", "header")
+                header_label = ttk.Label(self.log_container, text="=== SESSION STOPPED ===",
+                                        font=("Courier", 9, "bold"), foreground="gray")
+                header_label.grid(row=row, column=0, sticky=tk.W, pady=(0, 2))
+                row += 1
+                
                 if stats['session_id']:
-                    self.log_text.insert(tk.END, f"Session ID: {stats['session_id']}\n")
-                self.log_text.insert(tk.END, f"Frames Processed: {stats['frames_processed']}\n\n")
+                    session_id_label = ttk.Label(self.log_container, 
+                                                text=f"Session ID: {stats['session_id']}",
+                                                font=("Courier", 9))
+                    session_id_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                    row += 1
             
-            # Defect summary
-            self.log_text.insert(tk.END, "--- Defect Summary ---\n", "section")
-            self.log_text.insert(tk.END, f"Total Defects: {stats['total_defects']}\n")
-            self.log_text.insert(tk.END, f"Total Clusters: {stats['total_clusters']}\n\n")
+            frames_label = ttk.Label(self.log_container, 
+                                    text=f"Frames Processed: {stats['frames_processed']}",
+                                    font=("Courier", 9))
+            frames_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+            row += 1
             
-            # Active cluster info
+            # Defect summary section
+            summary_header = ttk.Label(self.log_container, text="--- Defect Summary ---",
+                                      font=("Courier", 9, "bold"), foreground="darkgreen")
+            summary_header.grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
+            row += 1
+            
+            total_defects_label = ttk.Label(self.log_container, 
+                                           text=f"Total Defects: {stats['total_defects']}",
+                                           font=("Courier", 9))
+            total_defects_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+            row += 1
+            
+            total_clusters_label = ttk.Label(self.log_container, 
+                                            text=f"Total Clusters: {stats['total_clusters']}",
+                                            font=("Courier", 9))
+            total_clusters_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+            row += 1
+            
+            # Active cluster section
+            cluster_header = ttk.Label(self.log_container, text="--- Active Cluster ---",
+                                      font=("Courier", 9, "bold"), foreground="darkgreen")
+            cluster_header.grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
+            row += 1
+            
             if stats['active_cluster']:
                 cluster = stats['active_cluster']
-                self.log_text.insert(tk.END, "--- Active Cluster ---\n", "section")
-                self.log_text.insert(tk.END, f"Duration: {cluster['duration']:.2f}s\n")
-                self.log_text.insert(tk.END, f"Frames: {cluster['frame_count']}\n")
-                self.log_text.insert(tk.END, f"Defects: {cluster['defect_count']}\n")
-                self.log_text.insert(tk.END, f"Classes: {', '.join(cluster['classes'].keys())}\n\n")
+                cluster_duration_label = ttk.Label(self.log_container, 
+                                                  text=f"Duration: {cluster['duration']:.2f}s",
+                                                  font=("Courier", 9))
+                cluster_duration_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                row += 1
+                
+                cluster_frames_label = ttk.Label(self.log_container, 
+                                                text=f"Frames: {cluster['frame_count']}",
+                                                font=("Courier", 9))
+                cluster_frames_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                row += 1
+                
+                cluster_defects_label = ttk.Label(self.log_container, 
+                                                 text=f"Defects: {cluster['defect_count']}",
+                                                 font=("Courier", 9))
+                cluster_defects_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                row += 1
+                
+                cluster_classes_label = ttk.Label(self.log_container, 
+                                                 text=f"Classes: {', '.join(cluster['classes'].keys())}",
+                                                 font=("Courier", 9))
+                cluster_classes_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+                row += 1
             else:
-                self.log_text.insert(tk.END, "--- Active Cluster ---\n", "section")
-                self.log_text.insert(tk.END, "No active cluster\n\n")
+                no_cluster_label = ttk.Label(self.log_container, text="No active cluster",
+                                            font=("Courier", 9))
+                no_cluster_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+                row += 1
             
-            # Stripe timing
+            # Stripe timing section
+            timing_header = ttk.Label(self.log_container, text="--- Stripe Timing ---",
+                                     font=("Courier", 9, "bold"), foreground="darkgreen")
+            timing_header.grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
+            row += 1
+            
             if stats['stripe_timing']:
                 timing = stats['stripe_timing']
-                self.log_text.insert(tk.END, "--- Stripe Timing ---\n", "section")
-                self.log_text.insert(tk.END, f"Duration: {timing['duration']:.3f}s\n")
-                self.log_text.insert(tk.END, f"Frames: {timing['start_frame']} → {timing['end_frame']}\n\n")
+                timing_duration_label = ttk.Label(self.log_container, 
+                                                text=f"Duration: {timing['duration']:.3f}s",
+                                                font=("Courier", 9))
+                timing_duration_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                row += 1
+                
+                timing_frames_label = ttk.Label(self.log_container, 
+                                               text=f"Frames: {timing['start_frame']} → {timing['end_frame']}",
+                                               font=("Courier", 9))
+                timing_frames_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+                row += 1
             else:
-                self.log_text.insert(tk.END, "--- Stripe Timing ---\n", "section")
-                self.log_text.insert(tk.END, "No normal stripes detected\n\n")
+                no_timing_label = ttk.Label(self.log_container, text="No normal stripes detected",
+                                            font=("Courier", 9))
+                no_timing_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
+                row += 1
             
-            # Per-class counts
+            # Per-class counts section
+            class_header = ttk.Label(self.log_container, text="--- Per-Class Counts ---",
+                                    font=("Courier", 9, "bold"), foreground="darkgreen")
+            class_header.grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
+            row += 1
+            
             if stats['class_counts']:
-                self.log_text.insert(tk.END, "--- Per-Class Counts ---\n", "section")
                 for class_name, count in sorted(stats['class_counts'].items(), 
-                                                key=lambda x: x[1], reverse=True):
-                    self.log_text.insert(tk.END, f"{class_name}: {count}\n")
+                                               key=lambda x: x[1], reverse=True):
+                    class_label = ttk.Label(self.log_container, 
+                                           text=f"{class_name}: {count}",
+                                           font=("Courier", 9))
+                    class_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                    row += 1
             else:
-                self.log_text.insert(tk.END, "--- Per-Class Counts ---\n", "section")
-                self.log_text.insert(tk.END, "No defects detected\n")
-            
-            # Configure text tags for formatting
-            self.log_text.tag_config("header", foreground="blue", font=("Courier", 9, "bold"))
-            self.log_text.tag_config("section", foreground="darkgreen", font=("Courier", 9, "bold"))
-            
-            # Auto-scroll to bottom
-            self.log_text.see(tk.END)
+                no_class_label = ttk.Label(self.log_container, text="No defects detected",
+                                         font=("Courier", 9))
+                no_class_label.grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
+                row += 1
             
         except Exception as e:
             print(f"[ERROR] Failed to update log display: {e}")
