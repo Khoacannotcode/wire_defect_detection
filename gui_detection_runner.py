@@ -62,6 +62,7 @@ class DetectionGUI:
         # Threshold sliders (will be initialized after detector)
         self.threshold_sliders = {}
         self.threshold_labels = {}
+        self.save_thresholds_timer = None  # Timer ID for debounced save
         
         # Frame counter for logging
         self.frame_number = 0
@@ -356,11 +357,20 @@ class DetectionGUI:
             if class_name in self.threshold_labels:
                 self.threshold_labels[class_name].config(text=f"{threshold:.2f}")
             
-            # Save to config (debounced - only save after user stops dragging)
-            self.root.after(500, lambda: self.save_thresholds())
+            # Cancel previous save timer if exists
+            if self.save_thresholds_timer is not None:
+                self.root.after_cancel(self.save_thresholds_timer)
+            
+            # Save to config (debounced - only save after user stops dragging for 500ms)
+            self.save_thresholds_timer = self.root.after(500, self._debounced_save_thresholds)
             
         except Exception as e:
             print(f"[ERROR] Failed to update threshold for {class_name}: {e}")
+    
+    def _debounced_save_thresholds(self):
+        """Debounced save thresholds (called after user stops dragging)"""
+        self.save_thresholds_timer = None  # Clear timer ID
+        self.save_thresholds()
     
     def save_thresholds(self):
         """Save current thresholds to config.json"""
@@ -377,9 +387,9 @@ class DetectionGUI:
         # Update config
         self.config['thresholds'] = thresholds
         
-        # Save to file
+        # Save to file (silent - no console spam)
         self.save_config()
-        print(f"[INFO] Saved thresholds to config: {thresholds}")
+        # Only print if debug mode (removed to reduce console spam)
     
     def start_capture(self):
         """Start camera capture in separate thread"""
