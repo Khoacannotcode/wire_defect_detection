@@ -223,33 +223,10 @@ class GStreamerCSICapture:
                 self.release()
                 return False
 
-            source = self.pipeline.get_by_name("camerasrc")
-            if source:
-                exposure_applied = False
-                gain_applied = False
-                try:
-                    source.set_property("exposuretimerange", (CAMERA_EXPOSURE_TIME, CAMERA_EXPOSURE_TIME))
-                    exposure_applied = True
-                except Exception:
-                    try:
-                        source.set_property("exposuretimerange", f"{CAMERA_EXPOSURE_TIME} {CAMERA_EXPOSURE_TIME}")
-                        exposure_applied = True
-                    except Exception as prop_exc:
-                        print(f"[WARN] Unable to set exposure via PyGObject: {prop_exc}")
-
-                try:
-                    source.set_property("gainrange", (CAMERA_ANALOG_GAIN, CAMERA_ANALOG_GAIN))
-                    gain_applied = True
-                except Exception:
-                    try:
-                        source.set_property("gainrange", f"{CAMERA_ANALOG_GAIN} {CAMERA_ANALOG_GAIN}")
-                        gain_applied = True
-                    except Exception as prop_exc:
-                        print(f"[WARN] Unable to set gain via PyGObject: {prop_exc}")
-
-                if exposure_applied and gain_applied:
-                    print(f"[INFO] Applied camera properties: exposure={CAMERA_EXPOSURE_TIME}, gain={CAMERA_ANALOG_GAIN}")
-
+            # Properties are already set in pipeline string via CAMERA_PROPERTY_STRING
+            # Don't set them again via set_property() to avoid "Invalid Exposure Time Range Input" error
+            # The pipeline string format works correctly when parsed by GStreamer
+            
             self.appsink.set_property("emit-signals", False)
             self.appsink.set_property("max-buffers", 1)
             self.appsink.set_property("drop", True)
@@ -276,6 +253,7 @@ class GStreamerCSICapture:
 
             self.is_opened = True
             print("[INFO] Using PyGObject GStreamer capture for CSI camera")
+            print(f"[INFO] Camera properties set via pipeline: exposure={CAMERA_EXPOSURE_TIME}, gain={CAMERA_ANALOG_GAIN}")
             return True
         except Exception as exc:
             print(f"[ERROR] Failed to initialize GStreamer capture: {exc}")
