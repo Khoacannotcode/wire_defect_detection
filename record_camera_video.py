@@ -24,7 +24,7 @@ ROOT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT_DIR))
 
 # Import camera capture function
-from run_camera_detection import open_capture, CAMERA_EXPOSURE_TIME, CAMERA_ANALOG_GAIN
+from run_camera_detection import open_capture, CAMERA_EXPOSURE_TIME, CAMERA_ANALOG_GAIN, GStreamerCSICapture
 
 # Add system packages to path for compatibility
 sys.path.insert(0, '/usr/lib/python3/dist-packages')
@@ -124,11 +124,20 @@ def record_video(duration=5, exposure=None, gain=None, output_dir=None,
     print("[INFO] Camera opened successfully")
     
     # Get actual frame dimensions (may differ from requested)
-    actual_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-    actual_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    actual_fps = capture.get(cv2.CAP_PROP_FPS)
-    if actual_fps <= 0:
-        actual_fps = fps
+    # Handle GStreamerCSICapture which doesn't have get() method
+    if isinstance(capture, GStreamerCSICapture):
+        # GStreamerCSICapture stores width/height/fps as attributes
+        actual_width = capture.width
+        actual_height = capture.height
+        actual_fps = capture.fps
+        print(f"[INFO] Using GStreamerCSICapture with stored properties")
+    else:
+        # Regular cv2.VideoCapture has get() method
+        actual_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = capture.get(cv2.CAP_PROP_FPS)
+        if actual_fps <= 0:
+            actual_fps = fps
     
     print(f"[INFO] Actual camera properties:")
     print(f"  - Resolution: {actual_width}x{actual_height}")
