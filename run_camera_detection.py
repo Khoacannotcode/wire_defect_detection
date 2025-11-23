@@ -448,7 +448,7 @@ class LiveWireDetector:
         print(f"[INFO] Detected model input size: {self.input_size}x{self.input_size}")
         self.crop_height = 80
         self.crop_width_ratio = 0.6
-        self.conf_threshold = 0.4  # Default threshold (increased from 0.25 to reduce excessive detections)
+        self.conf_threshold = 0.25  # Default threshold (reduced to allow detections)
         self.roi_color = (0, 255, 255)
 
         # Load class names dynamically
@@ -824,18 +824,29 @@ class LiveWireDetector:
             w = float(anchor[2])
             h = float(anchor[3])
             
-            # Apply sigmoid activation: YOLOv8 ONNX outputs raw logits
-            objectness_logit = float(anchor[4])
-            class_scores_logits = anchor[5:11].astype(np.float32)  # 6 classes (indices 5-10)
+            # Parse YOLOv8 ONNX output
+            # Note: YOLOv8 ONNX may output sigmoid-activated values OR raw logits
+            # Check if values are already in [0,1] range (sigmoid) or raw logits
+            objectness_raw = float(anchor[4])
+            class_scores_raw = anchor[5:11].astype(np.float32)  # 6 classes (indices 5-10)
             
-            # Sigmoid: 1 / (1 + exp(-x))
-            objectness = 1.0 / (1.0 + np.exp(-objectness_logit))
-            class_scores = 1.0 / (1.0 + np.exp(-class_scores_logits))
+            # Check if output is already sigmoid-activated (values in [0,1])
+            # If max value > 1 or min value < 0, likely raw logits
+            max_val = max(abs(objectness_raw), np.max(np.abs(class_scores_raw)))
+            is_sigmoid = max_val <= 1.0 and objectness_raw >= 0.0
             
-            # Objectness pre-filter: Filter out anchors with low objectness early
-            # This helps reduce excessive detections when model outputs many low-quality anchors
-            # Threshold 0.3 filters anchors that are unlikely to contain objects
-            if objectness < 0.3:
+            if is_sigmoid:
+                # Already sigmoid-activated, use directly
+                objectness = float(objectness_raw)
+                class_scores = class_scores_raw.astype(np.float32)
+            else:
+                # Raw logits, apply sigmoid
+                objectness = 1.0 / (1.0 + np.exp(-objectness_raw))
+                class_scores = 1.0 / (1.0 + np.exp(-class_scores_raw))
+            
+            # Objectness pre-filter: Lower threshold to avoid filtering valid detections
+            # Reduced from 0.3 to 0.1 to catch more potential detections
+            if objectness < 0.1:
                 skipped_count['objectness'] = skipped_count.get('objectness', 0) + 1
                 continue
 

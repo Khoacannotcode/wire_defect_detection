@@ -105,7 +105,7 @@ class SimpleWireDetector:
         print(f"[INFO] Detected model input size: {self.input_size}x{self.input_size}")
         self.crop_height = 80
         self.crop_width_ratio = 0.6
-        self.conf_threshold = 0.4  # Default threshold (increased from 0.25 to reduce excessive detections)
+        self.conf_threshold = 0.25  # Default threshold (reduced to allow detections)
         self.roi_color = (0, 255, 255)
         
         # Load class names dynamically
