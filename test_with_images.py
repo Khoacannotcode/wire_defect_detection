@@ -571,7 +571,7 @@ class SimpleWireDetector:
         result_image = self.draw_detections(original_image.copy(), scaled_detections, roi=roi)
         
         processing_time = time.time() - processing_start_time
-        return result_image, scaled_detections, processing_time, stats, stats
+        return result_image, scaled_detections, processing_time, stats
 
 def test_images():
     """Test detection with sample images"""
