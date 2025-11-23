@@ -105,7 +105,7 @@ class SimpleWireDetector:
         print(f"[INFO] Detected model input size: {self.input_size}x{self.input_size}")
         self.crop_height = 80
         self.crop_width_ratio = 0.6
-        self.conf_threshold = 0.25  # Default threshold (matching ultralytics YOLO default)
+        self.conf_threshold = 0.4  # Default threshold (increased from 0.25 to reduce excessive detections)
         self.roi_color = (0, 255, 255)
         
         # Load class names dynamically
@@ -404,7 +404,7 @@ class SimpleWireDetector:
 
         # Statistics collection (not printed during loop)
         raw_detections = []
-        skipped_count = {'len<13': 0, 'threshold': 0, 'bbox_invalid': 0}
+        skipped_count = {'len<13': 0, 'objectness': 0, 'threshold': 0, 'bbox_invalid': 0}
         confidence_values = []
         objectness_values = []
         class_counts = {name: 0 for name in self.class_names}
@@ -428,9 +428,12 @@ class SimpleWireDetector:
             objectness = 1.0 / (1.0 + np.exp(-objectness_logit))
             class_scores = 1.0 / (1.0 + np.exp(-class_scores_logits))
             
-            # Note: Removed objectness pre-filter to match ultralytics YOLO behavior
-            # Ultralytics uses only confidence threshold (objectness * max_class_score)
-            # Objectness pre-filter was filtering out too many valid detections
+            # Objectness pre-filter: Filter out anchors with low objectness early
+            # This helps reduce excessive detections when model outputs many low-quality anchors
+            # Threshold 0.3 filters anchors that are unlikely to contain objects
+            if objectness < 0.3:
+                skipped_count['objectness'] = skipped_count.get('objectness', 0) + 1
+                continue
 
             # Calculate confidence and class_id
             max_class_score = float(np.max(class_scores))
