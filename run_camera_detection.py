@@ -448,7 +448,7 @@ class LiveWireDetector:
         print(f"[INFO] Detected model input size: {self.input_size}x{self.input_size}")
         self.crop_height = 80
         self.crop_width_ratio = 0.6
-        self.conf_threshold = 0.5  # Default threshold (increased to reduce excessive detections)
+        self.conf_threshold = 0.3  # Default threshold (balanced to allow detections while filtering noise)
         self.roi_color = (0, 255, 255)
 
         # Load class names dynamically
@@ -844,9 +844,10 @@ class LiveWireDetector:
                 objectness = 1.0 / (1.0 + np.exp(-objectness_raw))
                 class_scores = 1.0 / (1.0 + np.exp(-class_scores_raw))
             
-            # Objectness pre-filter: Increased threshold to filter more aggressively
-            # Since all objectness values are 0.5 (suspicious), we need higher threshold
-            if objectness < 0.5:
+            # Objectness pre-filter: Use moderate threshold
+            # Note: If all objectness = 0.5, this suggests model output format issue
+            # But we still need to filter low-quality anchors
+            if objectness < 0.3:
                 skipped_count['objectness'] = skipped_count.get('objectness', 0) + 1
                 continue
 
