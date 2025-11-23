@@ -411,8 +411,14 @@ class SimpleWireDetector:
             y_center = float(anchor[1])
             w = float(anchor[2])
             h = float(anchor[3])
-            objectness = float(anchor[4])
-            class_scores = anchor[5:11].astype(np.float32)  # 6 classes (indices 5-10)
+            
+            # Apply sigmoid activation: YOLOv8 ONNX outputs raw logits
+            objectness_logit = float(anchor[4])
+            class_scores_logits = anchor[5:11].astype(np.float32)  # 6 classes (indices 5-10)
+            
+            # Sigmoid: 1 / (1 + exp(-x))
+            objectness = 1.0 / (1.0 + np.exp(-objectness_logit))
+            class_scores = 1.0 / (1.0 + np.exp(-class_scores_logits))
 
             # Calculate confidence and class_id
             max_class_score = float(np.max(class_scores))
@@ -422,8 +428,9 @@ class SimpleWireDetector:
             # DEBUG: Print first few detections
             if len(raw_detections) < 3:
                 print(f"  [DEBUG] Anchor: x_center={x_center:.2f}, y_center={y_center:.2f}, w={w:.2f}, h={h:.2f}, "
-                      f"objectness={objectness:.4f}, max_class_score={max_class_score:.4f}, conf={conf:.4f}, "
-                      f"class_id={class_id}, class={self.class_names[class_id]}, threshold={self.conf_threshold:.4f}")
+                      f"objectness_logit={objectness_logit:.4f}->{objectness:.4f}, "
+                      f"max_class_score_logit={float(np.max(class_scores_logits)):.4f}->{max_class_score:.4f}, "
+                      f"conf={conf:.4f}, class_id={class_id}, class={self.class_names[class_id]}, threshold={self.conf_threshold:.4f}")
 
             if conf < self.conf_threshold:
                 skipped_count['threshold'] += 1
