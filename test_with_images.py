@@ -489,22 +489,15 @@ def test_images():
     print("[TEST] Wire Defect Detection - Image Testing")
     print("=" * 60)
     
-    # Check for downgraded model first, then original
-    model_path_opset16 = MODELS_DIR / "best_cropped_opset16.onnx"
-    model_path_original = MODELS_DIR / "best_cropped.onnx"
+    # Use the latest model
+    model_path = MODELS_DIR / "best_cropped.onnx"
     
-    if model_path_opset16.exists():
-        model_path = model_path_opset16
-        print(f"[INFO] Using downgraded opset 16 model: {model_path}")
-    elif model_path_original.exists():
-        model_path = model_path_original
-        print(f"[INFO] Using original model: {model_path}")
-    else:
-        print(f"[ERROR] Model file not found. Searched for:")
-        print(f"  - {model_path_opset16}")
-        print(f"  - {model_path_original}")
+    if not model_path.exists():
+        print(f"[ERROR] Model file not found: {model_path}")
         print("Please ensure the ONNX model is in the models/ directory")
         return 1
+    
+    print(f"[INFO] Using model: {model_path}")
     
     # Initialize detector
     try:

@@ -213,34 +213,24 @@ print(f'  OpenCV version: {cv2.__version__}')
 
 # --- Model Check ---
 model_dir = 'models'
-model_path_opset16 = os.path.join(model_dir, "best_cropped_opset16.onnx")
-model_path_original = os.path.join(model_dir, "best_cropped.onnx")
+model_path = os.path.join(model_dir, "best_cropped.onnx")
 
-model_to_load = None
-if os.path.exists(model_path_opset16):
-    model_to_load = model_path_opset16
-    print(f"  Found pre-converted model, attempting to load: {model_to_load}")
-elif os.path.exists(model_path_original):
-    model_to_load = model_path_original
-    print(f"  Found original model, attempting to load: {model_to_load}")
-
-if model_to_load:
+if os.path.exists(model_path):
+    print(f"  Found model, attempting to load: {model_path}")
     try:
-        session = ort.InferenceSession(model_to_load, providers=['CPUExecutionProvider'])
+        session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
         print("  [SUCCESS] Model loads successfully with ONNX Runtime.")
     except Exception as exc:
         print(f"\n  [ERROR] Model loading failed: {exc}\n")
         print("  ================================[ TROUBLESHOOTING ]================================")
-        print("  This error often means the ONNX model's 'opset version' is too new.")
-        print("  The model must be opset 16 or lower to run on this device's environment.")
-        print("  Please convert the model on your development machine using the provided script")
-        print("  and place the converted 'best_cropped_opset16.onnx' file in the 'models' directory.")
+        print("  If the model fails to load, check:")
+        print("  1. Model file exists and is not corrupted")
+        print("  2. ONNX Runtime version is compatible")
+        print("  3. Model opset version is supported by ONNX Runtime")
         print("  ====================================================================================\n")
-
 else:
-    print(f"  [ERROR] Model file not found. Searched for:")
-    print(f"    - {model_path_opset16}")
-    print(f"    - {model_path_original}")
+    print(f"  [ERROR] Model file not found: {model_path}")
+    print("  Please ensure the ONNX model is in the models/ directory")
 
 # --- Camera Check ---
 def get_csi_pipeline(capture_width=1280, capture_height=720, framerate=30, display_width=1280, display_height=720):

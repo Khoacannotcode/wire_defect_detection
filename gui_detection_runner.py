@@ -132,11 +132,6 @@ class DetectionGUI:
         """Initialize LiveWireDetector"""
         model_path = Path(self.config.get('model_path', str(MODELS_DIR / 'best_cropped.onnx')))
         
-        # Prefer opset16 model if exists
-        model_path_opset16 = MODELS_DIR / "best_cropped_opset16.onnx"
-        if model_path_opset16.exists():
-            model_path = model_path_opset16
-        
         if not model_path.exists():
             messagebox.showerror("Error", f"Model not found: {model_path}")
             return
