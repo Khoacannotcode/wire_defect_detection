@@ -448,7 +448,7 @@ class LiveWireDetector:
         print(f"[INFO] Detected model input size: {self.input_size}x{self.input_size}")
         self.crop_height = 80
         self.crop_width_ratio = 0.6
-        self.conf_threshold = 0.22  # Default threshold (can be overridden by per-class thresholds)
+        self.conf_threshold = 0.25  # Default threshold (increased from 0.22 - typical YOLOv8 threshold after sigmoid)
         self.roi_color = (0, 255, 255)
 
         # Load class names dynamically
