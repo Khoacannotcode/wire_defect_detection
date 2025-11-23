@@ -378,29 +378,52 @@ class SimpleWireDetector:
         return iou
 
     def postprocess(self, output, ratio, dwdh, cropped_shape):
-        """Extract detections from YOLO model output with NMS."""
+        """Extract detections from YOLOv8 ONNX model output with NMS.
+        
+        YOLOv8 ONNX output format: (batch, features, anchors) = (1, 13, 8400)
+        Format: [x_center, y_center, w, h, objectness, class_0, ..., class_5, ...]
+        Need to transpose to (8400, 13) to iterate over anchors.
+        """
         if output.ndim == 3:
-            output = output[0]
+            output = output[0]  # Remove batch dimension: (13, 8400)
 
-        # DEBUG: Print output shape and sample
-        print(f"  [DEBUG] Postprocess - output shape: {output.shape}, dtype: {output.dtype}")
+        # DEBUG: Print output shape before transpose
+        print(f"  [DEBUG] Postprocess - output shape before transpose: {output.shape}, dtype: {output.dtype}")
+
+        # Transpose: (13, 8400) -> (8400, 13)
+        # Now each row is an anchor with 13 features
+        output = output.transpose(1, 0)  # (8400, 13)
+        
+        print(f"  [DEBUG] Postprocess - output shape after transpose: {output.shape}")
         if len(output) > 0:
-            print(f"  [DEBUG] First detection sample: {output[0]}")
-            print(f"  [DEBUG] Output columns: {output.shape[1] if len(output.shape) > 1 else 'N/A'}")
+            print(f"  [DEBUG] First anchor sample: {output[0]}")
 
         raw_detections = []
-        skipped_count = {'len<6': 0, 'threshold': 0, 'class_id_invalid': 0, 'bbox_invalid': 0}
+        skipped_count = {'len<13': 0, 'threshold': 0, 'bbox_invalid': 0}
 
-        for detection in output:
-            if len(detection) < 6:
-                skipped_count['len<6'] += 1
+        for anchor in output:
+            if len(anchor) < 13:
+                skipped_count['len<13'] += 1
                 continue
 
-            x1, y1, x2, y2, conf, class_id = detection[:6]
+            # Parse YOLOv8 format: [x_center, y_center, w, h, objectness, class_0, ..., class_5, ...]
+            x_center = float(anchor[0])
+            y_center = float(anchor[1])
+            w = float(anchor[2])
+            h = float(anchor[3])
+            objectness = float(anchor[4])
+            class_scores = anchor[5:11].astype(np.float32)  # 6 classes (indices 5-10)
+
+            # Calculate confidence and class_id
+            max_class_score = float(np.max(class_scores))
+            conf = objectness * max_class_score
+            class_id = int(np.argmax(class_scores))
 
             # DEBUG: Print first few detections
             if len(raw_detections) < 3:
-                print(f"  [DEBUG] Detection: x1={x1:.2f}, y1={y1:.2f}, x2={x2:.2f}, y2={y2:.2f}, conf={conf:.4f}, class_id={class_id}, threshold={self.conf_threshold:.4f}")
+                print(f"  [DEBUG] Anchor: x_center={x_center:.2f}, y_center={y_center:.2f}, w={w:.2f}, h={h:.2f}, "
+                      f"objectness={objectness:.4f}, max_class_score={max_class_score:.4f}, conf={conf:.4f}, "
+                      f"class_id={class_id}, class={self.class_names[class_id]}, threshold={self.conf_threshold:.4f}")
 
             if conf < self.conf_threshold:
                 skipped_count['threshold'] += 1
@@ -408,13 +431,13 @@ class SimpleWireDetector:
                     print(f"  [DEBUG] Filtered by threshold: conf={conf:.4f} < threshold={self.conf_threshold:.4f}")
                 continue
 
-            class_id = int(class_id)
-            if class_id >= len(self.class_names):
-                skipped_count['class_id_invalid'] += 1
-                if len(raw_detections) == 0:
-                    print(f"  [DEBUG] Invalid class_id: {class_id}, max: {len(self.class_names)-1}")
-                continue
+            # Convert center format to xyxy
+            x1 = x_center - w / 2
+            y1 = y_center - h / 2
+            x2 = x_center + w / 2
+            y2 = y_center + h / 2
 
+            # Scale bbox from letterbox to cropped image
             bbox_cropped = self.scale_bbox_from_letterbox(
                 [x1, y1, x2, y2],
                 ratio,
@@ -437,7 +460,7 @@ class SimpleWireDetector:
         final_detections = self.nms(raw_detections, iou_threshold=0.5)
 
         # DEBUG: Print summary
-        print(f"  [DEBUG] Postprocess summary: total rows={len(output)}, valid detections={len(raw_detections)}, after NMS={len(final_detections)}, skipped: {skipped_count}")
+        print(f"  [DEBUG] Postprocess summary: total anchors={len(output)}, valid detections={len(raw_detections)}, after NMS={len(final_detections)}, skipped: {skipped_count}")
 
         return final_detections
     
