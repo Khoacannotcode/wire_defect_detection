@@ -448,7 +448,7 @@ class LiveWireDetector:
         print(f"[INFO] Detected model input size: {self.input_size}x{self.input_size}")
         self.crop_height = 80
         self.crop_width_ratio = 0.6
-        self.conf_threshold = 0.25  # Default threshold (increased from 0.22 - typical YOLOv8 threshold after sigmoid)
+        self.conf_threshold = 0.3  # Default threshold (increased from 0.25 - typical YOLOv8 threshold after sigmoid)
         self.roi_color = (0, 255, 255)
 
         # Load class names dynamically
@@ -751,18 +751,11 @@ class LiveWireDetector:
         # Run inference
         outputs = self.session.run(None, {self.input_name: input_data})
         
-        # DEBUG: Print inference output info
-        print(f"[DEBUG] Inference output shape: {outputs[0].shape}")
-        if outputs[0].size > 0:
-            print(f"[DEBUG] Output min/max: {outputs[0].min():.6f}/{outputs[0].max():.6f}")
-            print(f"[DEBUG] Output dtype: {outputs[0].dtype}")
-            if len(outputs[0]) > 0:
-                print(f"[DEBUG] First output row sample: {outputs[0][0]}")
- 
-        detections = self.postprocess(outputs[0], ratio, dwdh, cropped_frame.shape)
-        
-        # DEBUG: Print detection count
-        print(f"[DEBUG] Raw detections after postprocess: {len(detections)}")
+        # Postprocess with smart logging (no verbose for real-time)
+        detections = self.postprocess(
+            outputs[0], ratio, dwdh, cropped_frame.shape,
+            verbose=False, image_name=None
+        )
 
         scaled_detections = []
         for det in detections:
@@ -788,29 +781,37 @@ class LiveWireDetector:
         processing_time = time.time() - start_time
         return annotated_frame, scaled_detections, processing_time
 
-    def postprocess(self, output, ratio, dwdh, cropped_shape):
+    def postprocess(self, output, ratio, dwdh, cropped_shape, verbose=False, image_name=None):
         """Extract detections from YOLOv8 ONNX model output.
         
         YOLOv8 ONNX output format: (batch, features, anchors) = (1, 13, 8400)
         Format: [x_center, y_center, w, h, objectness, class_0, ..., class_5, ...]
         Need to transpose to (8400, 13) to iterate over anchors.
+        
+        Args:
+            output: Model output array
+            ratio: Letterbox ratio
+            dwdh: Letterbox padding
+            cropped_shape: Cropped image shape
+            verbose: If True, print detailed debug info (default: False)
+            image_name: Optional image name for logging (default: None)
+        
+        Returns:
+            List of detections after NMS
         """
         if output.ndim == 3:
             output = output[0]  # Remove batch dimension: (13, 8400)
 
-        # DEBUG: Print output shape before transpose
-        print(f"[DEBUG] Postprocess - output shape before transpose: {output.shape}, dtype: {output.dtype}")
-
         # Transpose: (13, 8400) -> (8400, 13)
         # Now each row is an anchor with 13 features
         output = output.transpose(1, 0)  # (8400, 13)
-        
-        print(f"[DEBUG] Postprocess - output shape after transpose: {output.shape}")
-        if len(output) > 0:
-            print(f"[DEBUG] First anchor sample: {output[0]}")
 
+        # Statistics collection (not printed during loop)
         raw_detections = []
         skipped_count = {'len<13': 0, 'threshold': 0, 'bbox_invalid': 0}
+        confidence_values = []
+        objectness_values = []
+        class_counts = {name: 0 for name in self.class_names}
 
         for anchor in output:
             if len(anchor) < 13:
@@ -829,6 +830,14 @@ class LiveWireDetector:
             
             # Sigmoid: 1 / (1 + exp(-x))
             objectness = 1.0 / (1.0 + np.exp(-objectness_logit))
+            
+            # Objectness pre-filter: Filter low objectness anchors before class score calculation
+            # This dramatically reduces false positives
+            OBJECTNESS_THRESHOLD = 0.5
+            if objectness < OBJECTNESS_THRESHOLD:
+                skipped_count['threshold'] += 1
+                continue
+            
             class_scores = 1.0 / (1.0 + np.exp(-class_scores_logits))
 
             # Calculate confidence and class_id
@@ -840,17 +849,17 @@ class LiveWireDetector:
             class_name = self.class_names[class_id]
             threshold = self.class_thresholds.get(class_name, self.conf_threshold)
 
-            # DEBUG: Print first few detections
-            if len(raw_detections) < 3:
+            # Collect statistics
+            objectness_values.append(objectness)
+
+            # Verbose debug: Print first 3 detections only
+            if verbose and len(raw_detections) < 3:
                 print(f"[DEBUG] Anchor: x_center={x_center:.2f}, y_center={y_center:.2f}, w={w:.2f}, h={h:.2f}, "
-                      f"objectness_logit={objectness_logit:.4f}->{objectness:.4f}, "
-                      f"max_class_score_logit={float(np.max(class_scores_logits)):.4f}->{max_class_score:.4f}, "
-                      f"conf={conf:.4f}, class_id={class_id}, class={class_name}, threshold={threshold:.4f}")
+                      f"objectness={objectness:.4f}, max_class_score={max_class_score:.4f}, "
+                      f"conf={conf:.4f}, class={class_name}, threshold={threshold:.4f}")
 
             if conf < threshold:
                 skipped_count['threshold'] += 1
-                if len(raw_detections) < 3:
-                    print(f"[DEBUG] Filtered by threshold: conf={conf:.4f} < threshold={threshold:.4f}")
                 continue
 
             # Convert center format to xyxy
@@ -871,6 +880,10 @@ class LiveWireDetector:
                 skipped_count['bbox_invalid'] += 1
                 continue
 
+            # Collect statistics for valid detections
+            confidence_values.append(conf)
+            class_counts[class_name] += 1
+
             raw_detections.append({
                 'class_id': class_id,
                 'class_name': class_name,
@@ -878,10 +891,23 @@ class LiveWireDetector:
                 'bbox': bbox_cropped
             })
 
-        # DEBUG: Print summary
-        print(f"[DEBUG] Postprocess summary: total anchors={len(output)}, valid detections={len(raw_detections)}, skipped: {skipped_count}")
+        # Apply NMS
+        final_detections = self.nms(raw_detections, iou_threshold=0.5)
 
-        return self.nms(raw_detections, iou_threshold=0.5)
+        # Smart logging: One-line summary per image
+        if image_name:
+            conf_min = min(confidence_values) if confidence_values else 0.0
+            conf_max = max(confidence_values) if confidence_values else 0.0
+            conf_mean = sum(confidence_values) / len(confidence_values) if confidence_values else 0.0
+            obj_min = min(objectness_values) if objectness_values else 0.0
+            obj_max = max(objectness_values) if objectness_values else 0.0
+            obj_mean = sum(objectness_values) / len(objectness_values) if objectness_values else 0.0
+            
+            print(f"[IMAGE] {image_name}: anchors={len(output)}, after_threshold={len(raw_detections)}, "
+                  f"after_nms={len(final_detections)}, conf_range=[{conf_min:.2f}-{conf_max:.2f}], "
+                  f"obj_range=[{obj_min:.2f}-{obj_max:.2f}]")
+
+        return final_detections
     
     def set_class_threshold(self, class_name: str, threshold: float):
         """Set threshold for a specific class"""

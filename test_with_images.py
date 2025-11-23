@@ -105,7 +105,7 @@ class SimpleWireDetector:
         print(f"[INFO] Detected model input size: {self.input_size}x{self.input_size}")
         self.crop_height = 80
         self.crop_width_ratio = 0.6
-        self.conf_threshold = 0.25  # Default threshold (increased from 0.22 - typical YOLOv8 threshold after sigmoid)
+        self.conf_threshold = 0.3  # Default threshold (increased from 0.25 - typical YOLOv8 threshold after sigmoid)
         self.roi_color = (0, 255, 255)
         
         # Load class names dynamically
@@ -377,29 +377,37 @@ class SimpleWireDetector:
         iou = intersection / union if union > 0 else 0.0
         return iou
 
-    def postprocess(self, output, ratio, dwdh, cropped_shape):
+    def postprocess(self, output, ratio, dwdh, cropped_shape, verbose=False, image_name=None):
         """Extract detections from YOLOv8 ONNX model output with NMS.
         
         YOLOv8 ONNX output format: (batch, features, anchors) = (1, 13, 8400)
         Format: [x_center, y_center, w, h, objectness, class_0, ..., class_5, ...]
         Need to transpose to (8400, 13) to iterate over anchors.
+        
+        Args:
+            output: Model output array
+            ratio: Letterbox ratio
+            dwdh: Letterbox padding
+            cropped_shape: Cropped image shape
+            verbose: If True, print detailed debug info (default: False)
+            image_name: Optional image name for logging (default: None)
+        
+        Returns:
+            Tuple of (detections_after_nms, statistics_dict)
         """
         if output.ndim == 3:
             output = output[0]  # Remove batch dimension: (13, 8400)
 
-        # DEBUG: Print output shape before transpose
-        print(f"  [DEBUG] Postprocess - output shape before transpose: {output.shape}, dtype: {output.dtype}")
-
         # Transpose: (13, 8400) -> (8400, 13)
         # Now each row is an anchor with 13 features
         output = output.transpose(1, 0)  # (8400, 13)
-        
-        print(f"  [DEBUG] Postprocess - output shape after transpose: {output.shape}")
-        if len(output) > 0:
-            print(f"  [DEBUG] First anchor sample: {output[0]}")
 
+        # Statistics collection (not printed during loop)
         raw_detections = []
         skipped_count = {'len<13': 0, 'threshold': 0, 'bbox_invalid': 0}
+        confidence_values = []
+        objectness_values = []
+        class_counts = {name: 0 for name in self.class_names}
 
         for anchor in output:
             if len(anchor) < 13:
@@ -418,6 +426,14 @@ class SimpleWireDetector:
             
             # Sigmoid: 1 / (1 + exp(-x))
             objectness = 1.0 / (1.0 + np.exp(-objectness_logit))
+            
+            # Objectness pre-filter: Filter low objectness anchors before class score calculation
+            # This dramatically reduces false positives
+            OBJECTNESS_THRESHOLD = 0.5
+            if objectness < OBJECTNESS_THRESHOLD:
+                skipped_count['threshold'] += 1
+                continue
+            
             class_scores = 1.0 / (1.0 + np.exp(-class_scores_logits))
 
             # Calculate confidence and class_id
@@ -425,17 +441,17 @@ class SimpleWireDetector:
             conf = objectness * max_class_score
             class_id = int(np.argmax(class_scores))
 
-            # DEBUG: Print first few detections
-            if len(raw_detections) < 3:
+            # Collect statistics
+            objectness_values.append(objectness)
+
+            # Verbose debug: Print first 3 detections only
+            if verbose and len(raw_detections) < 3:
                 print(f"  [DEBUG] Anchor: x_center={x_center:.2f}, y_center={y_center:.2f}, w={w:.2f}, h={h:.2f}, "
-                      f"objectness_logit={objectness_logit:.4f}->{objectness:.4f}, "
-                      f"max_class_score_logit={float(np.max(class_scores_logits)):.4f}->{max_class_score:.4f}, "
-                      f"conf={conf:.4f}, class_id={class_id}, class={self.class_names[class_id]}, threshold={self.conf_threshold:.4f}")
+                      f"objectness={objectness:.4f}, max_class_score={max_class_score:.4f}, "
+                      f"conf={conf:.4f}, class={self.class_names[class_id]}, threshold={self.conf_threshold:.4f}")
 
             if conf < self.conf_threshold:
                 skipped_count['threshold'] += 1
-                if len(raw_detections) < 3:
-                    print(f"  [DEBUG] Filtered by threshold: conf={conf:.4f} < threshold={self.conf_threshold:.4f}")
                 continue
 
             # Convert center format to xyxy
@@ -456,6 +472,10 @@ class SimpleWireDetector:
                 skipped_count['bbox_invalid'] += 1
                 continue
 
+            # Collect statistics for valid detections
+            confidence_values.append(conf)
+            class_counts[self.class_names[class_id]] += 1
+
             raw_detections.append({
                 'class_id': class_id,
                 'class_name': self.class_names[class_id],
@@ -464,12 +484,34 @@ class SimpleWireDetector:
                 'bbox_letterbox': [x1, y1, x2, y2]
             })
 
+        # Apply NMS
         final_detections = self.nms(raw_detections, iou_threshold=0.5)
 
-        # DEBUG: Print summary
-        print(f"  [DEBUG] Postprocess summary: total anchors={len(output)}, valid detections={len(raw_detections)}, after NMS={len(final_detections)}, skipped: {skipped_count}")
+        # Smart logging: One-line summary per image
+        if image_name:
+            conf_min = min(confidence_values) if confidence_values else 0.0
+            conf_max = max(confidence_values) if confidence_values else 0.0
+            conf_mean = sum(confidence_values) / len(confidence_values) if confidence_values else 0.0
+            obj_min = min(objectness_values) if objectness_values else 0.0
+            obj_max = max(objectness_values) if objectness_values else 0.0
+            obj_mean = sum(objectness_values) / len(objectness_values) if objectness_values else 0.0
+            
+            print(f"  [IMAGE] {image_name}: anchors={len(output)}, after_threshold={len(raw_detections)}, "
+                  f"after_nms={len(final_detections)}, conf_range=[{conf_min:.2f}-{conf_max:.2f}], "
+                  f"obj_range=[{obj_min:.2f}-{obj_max:.2f}]")
 
-        return final_detections
+        # Return statistics for overall summary
+        stats = {
+            'total_anchors': len(output),
+            'after_threshold': len(raw_detections),
+            'after_nms': len(final_detections),
+            'confidence_values': confidence_values,
+            'objectness_values': objectness_values,
+            'class_counts': class_counts,
+            'skipped': skipped_count
+        }
+
+        return final_detections, stats
     
     def detect_image(self, image_path):
         """Detect defects in a single image"""
@@ -480,7 +522,7 @@ class SimpleWireDetector:
         # Load image
         image = cv2.imread(str(image_path))
         if image is None:
-            return None, [], 0
+            return None, [], 0, {}
         
         original_image = image.copy()
         # print(f"  Original image: {image.shape[1]}x{image.shape[0]}")
@@ -495,19 +537,11 @@ class SimpleWireDetector:
         # Run inference
         outputs = self.session.run(None, {self.input_name: input_data})
         
-        # DEBUG: Print inference output info
-        print(f"  [DEBUG] Inference output shape: {outputs[0].shape}")
-        if outputs[0].size > 0:
-            print(f"  [DEBUG] Output min/max: {outputs[0].min():.6f}/{outputs[0].max():.6f}")
-            print(f"  [DEBUG] Output dtype: {outputs[0].dtype}")
-            if len(outputs[0]) > 0:
-                print(f"  [DEBUG] First output row sample: {outputs[0][0]}")
-        
-        # Postprocess
-        detections = self.postprocess(outputs[0], ratio, dwdh, cropped_image.shape)
-        
-        # DEBUG: Print detection count
-        print(f"  [DEBUG] Raw detections after postprocess: {len(detections)}")
+        # Postprocess with smart logging
+        detections, stats = self.postprocess(
+            outputs[0], ratio, dwdh, cropped_image.shape,
+            verbose=False, image_name=image_path.name
+        )
         
         # Scale detections from model input size to original image coordinates
         scaled_detections = []
@@ -537,7 +571,7 @@ class SimpleWireDetector:
         result_image = self.draw_detections(original_image.copy(), scaled_detections, roi=roi)
         
         processing_time = time.time() - processing_start_time
-        return result_image, scaled_detections, processing_time
+        return result_image, scaled_detections, processing_time, stats, stats
 
 def test_images():
     """Test detection with sample images"""
@@ -583,16 +617,28 @@ def test_images():
     class_counts = {cls: 0 for cls in detector.class_names}
     TEST_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     
+    # Statistics collection for overall summary
+    all_confidence_values = []
+    all_objectness_values = []
+    total_after_threshold = 0
+    total_after_nms = 0
+    
     for i, image_path in enumerate(image_files, 1):
         print(f"[{i}/{len(image_files)}] Testing: {image_path.name}")
         
         try:
-            result_image, detections, processing_time = detector.detect_image(image_path)
+            result_image, detections, processing_time, stats = detector.detect_image(image_path)
             
             if result_image is not None:
                 # Count detections
                 total_detections += len(detections)
                 total_time += processing_time
+                
+                # Collect statistics
+                all_confidence_values.extend(stats['confidence_values'])
+                all_objectness_values.extend(stats['objectness_values'])
+                total_after_threshold += stats['after_threshold']
+                total_after_nms += stats['after_nms']
                 
                 # Update class counts
                 for det in detections:
@@ -601,9 +647,6 @@ def test_images():
                 # Print results
                 print(f"  [TIME] Processing: {processing_time*1000:.1f}ms")
                 print(f"  [DETECT] Detections: {len(detections)}")
-                
-                for det in detections:
-                    print(f"    - {det['class_name']}: {det['confidence']:.3f}")
                 
                 # Save result (optional)
                 output_path = TEST_RESULTS_DIR / f"test_results_{image_path.name}"
@@ -616,6 +659,44 @@ def test_images():
         except Exception as e:
             print(f"  [ERROR] Error: {e}")
         
+        print()
+    
+    # Overall Statistics Summary
+    print("=" * 60)
+    print("[STATS] OVERALL STATISTICS SUMMARY")
+    print("=" * 60)
+    
+    # Calculate confidence distribution
+    if all_confidence_values:
+        conf_buckets = {
+            '0.25-0.3': sum(1 for c in all_confidence_values if 0.25 <= c < 0.3),
+            '0.3-0.4': sum(1 for c in all_confidence_values if 0.3 <= c < 0.4),
+            '0.4-0.5': sum(1 for c in all_confidence_values if 0.4 <= c < 0.5),
+            '0.5+': sum(1 for c in all_confidence_values if c >= 0.5)
+        }
+        print("Confidence distribution:")
+        for bucket, count in conf_buckets.items():
+            percentage = (count / len(all_confidence_values) * 100) if all_confidence_values else 0
+            print(f"  {bucket}: {count} ({percentage:.1f}%)")
+        print()
+    
+    # Calculate objectness distribution
+    if all_objectness_values:
+        obj_buckets = {
+            '0.0-0.3': sum(1 for o in all_objectness_values if 0.0 <= o < 0.3),
+            '0.3-0.5': sum(1 for o in all_objectness_values if 0.3 <= o < 0.5),
+            '0.5+': sum(1 for o in all_objectness_values if o >= 0.5)
+        }
+        print("Objectness distribution:")
+        for bucket, count in obj_buckets.items():
+            percentage = (count / len(all_objectness_values) * 100) if all_objectness_values else 0
+            print(f"  {bucket}: {count} ({percentage:.1f}%)")
+        print()
+    
+    # NMS effectiveness
+    if total_after_threshold > 0:
+        nms_reduction = ((total_after_threshold - total_after_nms) / total_after_threshold) * 100
+        print(f"NMS effectiveness: {nms_reduction:.1f}% reduction ({total_after_threshold} → {total_after_nms})")
         print()
     
     # Summary
