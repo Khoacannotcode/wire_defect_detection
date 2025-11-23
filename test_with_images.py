@@ -379,27 +379,40 @@ class SimpleWireDetector:
 
     def postprocess(self, output, ratio, dwdh, cropped_shape):
         """Extract detections from YOLO model output with NMS."""
-        # This part of the log is now less relevant as the main timer captures the whole process.
-        # print(f"ONNX output shape: {output.shape}")
-
         if output.ndim == 3:
             output = output[0]
 
-        # print(f"After batch removal: {output.shape}")
+        # DEBUG: Print output shape and sample
+        print(f"  [DEBUG] Postprocess - output shape: {output.shape}, dtype: {output.dtype}")
+        if len(output) > 0:
+            print(f"  [DEBUG] First detection sample: {output[0]}")
+            print(f"  [DEBUG] Output columns: {output.shape[1] if len(output.shape) > 1 else 'N/A'}")
 
         raw_detections = []
+        skipped_count = {'len<6': 0, 'threshold': 0, 'class_id_invalid': 0, 'bbox_invalid': 0}
 
         for detection in output:
             if len(detection) < 6:
+                skipped_count['len<6'] += 1
                 continue
 
             x1, y1, x2, y2, conf, class_id = detection[:6]
 
+            # DEBUG: Print first few detections
+            if len(raw_detections) < 3:
+                print(f"  [DEBUG] Detection: x1={x1:.2f}, y1={y1:.2f}, x2={x2:.2f}, y2={y2:.2f}, conf={conf:.4f}, class_id={class_id}, threshold={self.conf_threshold:.4f}")
+
             if conf < self.conf_threshold:
+                skipped_count['threshold'] += 1
+                if len(raw_detections) < 3:
+                    print(f"  [DEBUG] Filtered by threshold: conf={conf:.4f} < threshold={self.conf_threshold:.4f}")
                 continue
 
             class_id = int(class_id)
             if class_id >= len(self.class_names):
+                skipped_count['class_id_invalid'] += 1
+                if len(raw_detections) == 0:
+                    print(f"  [DEBUG] Invalid class_id: {class_id}, max: {len(self.class_names)-1}")
                 continue
 
             bbox_cropped = self.scale_bbox_from_letterbox(
@@ -410,6 +423,7 @@ class SimpleWireDetector:
             )
 
             if bbox_cropped is None:
+                skipped_count['bbox_invalid'] += 1
                 continue
 
             raw_detections.append({
@@ -422,7 +436,8 @@ class SimpleWireDetector:
 
         final_detections = self.nms(raw_detections, iou_threshold=0.5)
 
-        # print(f"Detections found: {len(final_detections)}")
+        # DEBUG: Print summary
+        print(f"  [DEBUG] Postprocess summary: total rows={len(output)}, valid detections={len(raw_detections)}, after NMS={len(final_detections)}, skipped: {skipped_count}")
 
         return final_detections
     
@@ -450,8 +465,19 @@ class SimpleWireDetector:
         # Run inference
         outputs = self.session.run(None, {self.input_name: input_data})
         
+        # DEBUG: Print inference output info
+        print(f"  [DEBUG] Inference output shape: {outputs[0].shape}")
+        if outputs[0].size > 0:
+            print(f"  [DEBUG] Output min/max: {outputs[0].min():.6f}/{outputs[0].max():.6f}")
+            print(f"  [DEBUG] Output dtype: {outputs[0].dtype}")
+            if len(outputs[0]) > 0:
+                print(f"  [DEBUG] First output row sample: {outputs[0][0]}")
+        
         # Postprocess
         detections = self.postprocess(outputs[0], ratio, dwdh, cropped_image.shape)
+        
+        # DEBUG: Print detection count
+        print(f"  [DEBUG] Raw detections after postprocess: {len(detections)}")
         
         # Scale detections from model input size to original image coordinates
         scaled_detections = []
