@@ -17,11 +17,34 @@ import tempfile
 from collections import deque
 from pathlib import Path
 
-CAMERA_EXPOSURE_TIME = 200000  # microseconds
-CAMERA_ANALOG_GAIN = 8.0
+# Camera tuning parameters (matching simple_recorder.py successful settings)
+CAMERA_EXPOSURE_TIME = 250000  # microseconds
+CAMERA_ANALOG_GAIN = 7.0
+ISP_DIGITAL_GAIN = 1.0
+TNR_MODE = 0               # 0=Off, 1=Fast, 2=HighQuality
+TNR_STRENGTH = 0.4         # -1 (auto) to 1
+EE_MODE = 0                # 0=Off, 1=Fast, 2=HighQuality
+EE_STRENGTH = 0.2          # -1 (auto) to 1
+EXPOSURE_COMPENSATION = -2.0
+SENSOR_MODE = 5            # 1280x720 @120fps
+
+# Combine all settings into a GStreamer-compatible property string
 CAMERA_PROPERTY_STRING = (
-    f'exposuretimerange="{CAMERA_EXPOSURE_TIME} {CAMERA_EXPOSURE_TIME}" '
-    f'gainrange="{CAMERA_ANALOG_GAIN} {CAMERA_ANALOG_GAIN}"'
+    'sensor-mode={} '
+    'exposuretimerange="{} {}" '
+    'gainrange="{} {}" '
+    'ispdigitalgainrange="{} {}" '
+    'tnr-mode={} tnr-strength={} '
+    'ee-mode={} ee-strength={} '
+    'exposurecompensation={}'
+).format(
+    SENSOR_MODE,
+    CAMERA_EXPOSURE_TIME, CAMERA_EXPOSURE_TIME,
+    CAMERA_ANALOG_GAIN, CAMERA_ANALOG_GAIN,
+    ISP_DIGITAL_GAIN, ISP_DIGITAL_GAIN,
+    TNR_MODE, TNR_STRENGTH,
+    EE_MODE, EE_STRENGTH,
+    EXPOSURE_COMPENSATION
 )
 
 # Optional PyGObject / GStreamer bindings
@@ -223,32 +246,15 @@ class GStreamerCSICapture:
                 self.release()
                 return False
 
+            # Camera properties are already set via CAMERA_PROPERTY_STRING in pipeline string
+            # No need for manual set_property() calls which can cause conflicts
+            # The pipeline string format is the correct way to set nvarguscamerasrc properties
             source = self.pipeline.get_by_name("camerasrc")
             if source:
-                exposure_applied = False
-                gain_applied = False
-                try:
-                    source.set_property("exposuretimerange", (CAMERA_EXPOSURE_TIME, CAMERA_EXPOSURE_TIME))
-                    exposure_applied = True
-                except Exception:
-                    try:
-                        source.set_property("exposuretimerange", f"{CAMERA_EXPOSURE_TIME} {CAMERA_EXPOSURE_TIME}")
-                        exposure_applied = True
-                    except Exception as prop_exc:
-                        print(f"[WARN] Unable to set exposure via PyGObject: {prop_exc}")
-
-                try:
-                    source.set_property("gainrange", (CAMERA_ANALOG_GAIN, CAMERA_ANALOG_GAIN))
-                    gain_applied = True
-                except Exception:
-                    try:
-                        source.set_property("gainrange", f"{CAMERA_ANALOG_GAIN} {CAMERA_ANALOG_GAIN}")
-                        gain_applied = True
-                    except Exception as prop_exc:
-                        print(f"[WARN] Unable to set gain via PyGObject: {prop_exc}")
-
-                if exposure_applied and gain_applied:
-                    print(f"[INFO] Applied camera properties: exposure={CAMERA_EXPOSURE_TIME}, gain={CAMERA_ANALOG_GAIN}")
+                print(f"[INFO] Camera properties set via pipeline string: exposure={CAMERA_EXPOSURE_TIME}, gain={CAMERA_ANALOG_GAIN}, "
+                      f"ISP_digital_gain={ISP_DIGITAL_GAIN}, TNR={TNR_MODE}/{TNR_STRENGTH}, "
+                      f"EE={EE_MODE}/{EE_STRENGTH}, exposure_compensation={EXPOSURE_COMPENSATION}, "
+                      f"sensor_mode={SENSOR_MODE}")
 
             self.appsink.set_property("emit-signals", False)
             self.appsink.set_property("max-buffers", 1)
@@ -922,7 +928,13 @@ def open_capture(source, width, height, fps, use_gstreamer=False):
     cv_version = cv2.__version__
     print(f"[INFO] OpenCV version: {cv_version}")
     print(f"[INFO] Desired ROI: center 80px high × {int(width * 0.6)}px wide (overlay enabled)")
-    print(f"[INFO] Requested camera properties: exposure={CAMERA_EXPOSURE_TIME}, gain={CAMERA_ANALOG_GAIN}")
+    
+    # Verify camera settings are loaded correctly (matching simple_recorder.py)
+    print(f"[INFO] Camera settings (from constants): exposure={CAMERA_EXPOSURE_TIME}, gain={CAMERA_ANALOG_GAIN}, "
+          f"ISP_digital_gain={ISP_DIGITAL_GAIN}, TNR={TNR_MODE}/{TNR_STRENGTH}, "
+          f"EE={EE_MODE}/{EE_STRENGTH}, exposure_compensation={EXPOSURE_COMPENSATION}, "
+          f"sensor_mode={SENSOR_MODE}")
+    print(f"[INFO] Camera property string: {CAMERA_PROPERTY_STRING}")
     
     # Check OpenCV source and GStreamer support
     def check_opencv_source():
