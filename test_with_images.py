@@ -105,7 +105,7 @@ class SimpleWireDetector:
         print(f"[INFO] Detected model input size: {self.input_size}x{self.input_size}")
         self.crop_height = 80
         self.crop_width_ratio = 0.6
-        self.conf_threshold = 0.3  # Default threshold (increased from 0.25 - typical YOLOv8 threshold after sigmoid)
+        self.conf_threshold = 0.25  # Default threshold (matching ultralytics YOLO default)
         self.roi_color = (0, 255, 255)
         
         # Load class names dynamically
@@ -426,15 +426,11 @@ class SimpleWireDetector:
             
             # Sigmoid: 1 / (1 + exp(-x))
             objectness = 1.0 / (1.0 + np.exp(-objectness_logit))
-            
-            # Objectness pre-filter: Filter low objectness anchors before class score calculation
-            # This dramatically reduces false positives
-            OBJECTNESS_THRESHOLD = 0.5
-            if objectness < OBJECTNESS_THRESHOLD:
-                skipped_count['threshold'] += 1
-                continue
-            
             class_scores = 1.0 / (1.0 + np.exp(-class_scores_logits))
+            
+            # Note: Removed objectness pre-filter to match ultralytics YOLO behavior
+            # Ultralytics uses only confidence threshold (objectness * max_class_score)
+            # Objectness pre-filter was filtering out too many valid detections
 
             # Calculate confidence and class_id
             max_class_score = float(np.max(class_scores))
