@@ -77,45 +77,70 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
             EXPOSURE_COMPENSATION = -2.0
             SENSOR_MODE = 5            # 1280x720 @120fps
             
-            # Build camera property string (exact format from simple_recorder.py)
+            # Build camera property string (EXACT format from simple_recorder.py)
+            # Format exactly as in simple_recorder.py - proven to work smoothly
             camera_props = (
-                f'sensor-mode={SENSOR_MODE} '
-                f'exposuretimerange="{CAMERA_EXPOSURE_TIME} {CAMERA_EXPOSURE_TIME}" '
-                f'gainrange="{CAMERA_ANALOG_GAIN} {CAMERA_ANALOG_GAIN}" '
-                f'ispdigitalgainrange="{ISP_DIGITAL_GAIN} {ISP_DIGITAL_GAIN}" '
-                f'tnr-mode={TNR_MODE} tnr-strength={TNR_STRENGTH} '
-                f'ee-mode={EE_MODE} ee-strength={EE_STRENGTH} '
-                f'exposurecompensation={EXPOSURE_COMPENSATION}'
+                'sensor-mode={} '
+                'exposuretimerange="{} {}" '
+                'gainrange="{} {}" '
+                'ispdigitalgainrange="{} {}" '
+                'tnr-mode={} tnr-strength={} '
+                'ee-mode={} ee-strength={} '
+                'exposurecompensation={}'
+            ).format(
+                SENSOR_MODE,
+                CAMERA_EXPOSURE_TIME, CAMERA_EXPOSURE_TIME,
+                CAMERA_ANALOG_GAIN, CAMERA_ANALOG_GAIN,
+                ISP_DIGITAL_GAIN, ISP_DIGITAL_GAIN,
+                TNR_MODE, TNR_STRENGTH,
+                EE_MODE, EE_STRENGTH,
+                EXPOSURE_COMPENSATION
             )
             
-            # Build GStreamer pipeline (exact format from simple_recorder.py - proven to work)
-            # Note: sensor-id is added if source_int > 0, otherwise use default
+            # Build GStreamer pipeline (EXACT format from simple_recorder.py - proven to work smoothly)
+            # Note: simple_recorder.py uses framerate=120/1, but we use fps parameter for flexibility
+            # If source_int > 0, add sensor-id (not in original simple_recorder.py but needed for multi-camera)
             if source_int == 0:
+                # Exact format from simple_recorder.py (no sensor-id)
                 pipeline = (
-                    f'nvarguscamerasrc {camera_props} ! '
-                    f'video/x-raw(memory:NVMM), width={width}, height={height}, format=NV12, framerate={fps}/1 ! '
-                    f'nvvidconv ! video/x-raw, format=BGRx ! '
-                    f'videoconvert ! video/x-raw, format=BGR ! '
-                    f'appsink max-buffers=1 drop=true'
-                )
+                    'nvarguscamerasrc {} ! '
+                    'video/x-raw(memory:NVMM), width={}, height={}, format=NV12, framerate={}/1 ! '
+                    'nvvidconv ! video/x-raw, format=BGRx ! '
+                    'videoconvert ! video/x-raw, format=BGR ! '
+                    'appsink max-buffers=1 drop=true'
+                ).format(camera_props, width, height, fps)
             else:
+                # Add sensor-id for multi-camera support
                 pipeline = (
-                    f'nvarguscamerasrc {camera_props} sensor-id={source_int} ! '
-                    f'video/x-raw(memory:NVMM), width={width}, height={height}, format=NV12, framerate={fps}/1 ! '
-                    f'nvvidconv ! video/x-raw, format=BGRx ! '
-                    f'videoconvert ! video/x-raw, format=BGR ! '
-                    f'appsink max-buffers=1 drop=true'
-                )
+                    'nvarguscamerasrc {} sensor-id={} ! '
+                    'video/x-raw(memory:NVMM), width={}, height={}, format=NV12, framerate={}/1 ! '
+                    'nvvidconv ! video/x-raw, format=BGRx ! '
+                    'videoconvert ! video/x-raw, format=BGR ! '
+                    'appsink max-buffers=1 drop=true'
+                ).format(camera_props, source_int, width, height, fps)
             
+            print(f"[DEBUG] GStreamer pipeline: {pipeline}")
             cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
             if cap.isOpened():
-                # Test read to verify camera actually works
-                ret, test_frame = cap.read()
+                # Test read to verify camera actually works (with timeout)
+                import time
+                start_time = time.time()
+                ret = False
+                test_frame = None
+                # Try reading a few times (sometimes first read fails)
+                for attempt in range(5):
+                    ret, test_frame = cap.read()
+                    if ret and test_frame is not None:
+                        break
+                    time.sleep(0.1)
+                    if time.time() - start_time > 2.0:  # 2 second timeout
+                        break
+                
                 if ret and test_frame is not None:
                     print(f"[INFO] Camera opened successfully using GStreamer (with tuning parameters)")
                     return cap
                 else:
-                    print("[WARN] GStreamer opened but cannot read frames, falling back to OpenCV")
+                    print("[WARN] GStreamer opened but cannot read frames after 5 attempts, falling back to OpenCV")
                     cap.release()
                     cap = None
             else:
@@ -124,7 +149,10 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
         except Exception as e:
             print(f"[WARN] GStreamer error: {e}, falling back to OpenCV")
             if cap:
-                cap.release()
+                try:
+                    cap.release()
+                except:
+                    pass
             cap = None
     
     # Fallback to standard OpenCV VideoCapture

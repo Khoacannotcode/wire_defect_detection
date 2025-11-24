@@ -19,18 +19,17 @@ class TRTDetector:
     def __init__(self, engine_path):
         self.engine_path = Path(engine_path)
         
-        # Validate CUDA context initialization
+        # pycuda.autoinit already creates CUDA context automatically
+        # Don't create another context manually to avoid context stack issues
+        # Just verify CUDA is available
         try:
-            cuda.init()
+            # Get device info without creating new context
             device = cuda.Device(0)
-            ctx = device.make_context()
             device_name = device.name()
-            print(f"[INFO] CUDA context initialized on device: {device_name}")
-            # Store context for cleanup if needed
-            self.cuda_context = ctx
+            print(f"[INFO] CUDA device detected: {device_name}")
         except Exception as e:
-            print(f"[ERROR] Failed to initialize CUDA context: {e}")
-            raise RuntimeError(f"CUDA initialization failed: {e}. Please check CUDA installation.")
+            print(f"[ERROR] Failed to detect CUDA device: {e}")
+            raise RuntimeError(f"CUDA device not available: {e}. Please check CUDA installation.")
         
         self.engine = self._load_engine()
         self.context = self.engine.create_execution_context()

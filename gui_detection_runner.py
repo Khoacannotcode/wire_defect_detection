@@ -452,18 +452,33 @@ class DetectionGUI:
                 messagebox.showerror("Camera Error", error_msg)
                 return
             
-            # Verify camera can actually read frames
-            ret, test_frame = self.capture.read()
+            # Verify camera can actually read frames (with multiple attempts)
+            import time
+            ret = False
+            test_frame = None
+            start_time = time.time()
+            for attempt in range(10):  # Try up to 10 times
+                ret, test_frame = self.capture.read()
+                if ret and test_frame is not None:
+                    break
+                time.sleep(0.1)
+                if time.time() - start_time > 3.0:  # 3 second timeout
+                    break
+            
             if not ret or test_frame is None:
                 error_msg = (
                     f"Camera opened but cannot read frames\n\n"
                     "Possible solutions:\n"
                     "1. Camera may be in use by another application\n"
                     "2. Try different camera source\n"
-                    "3. Check camera connection"
+                    "3. Check camera connection\n"
+                    "4. Try disabling GStreamer in config.json (set use_gstreamer: false)"
                 )
                 messagebox.showerror("Camera Error", error_msg)
-                self.capture.release()
+                try:
+                    self.capture.release()
+                except:
+                    pass
                 self.capture = None
                 return
             
