@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Wire Defect Detection - Desktop GUI Application
 Tkinter-based GUI for real-time defect detection on Jetson Nano
@@ -110,7 +111,7 @@ class DetectionGUI:
                     user_config = json.load(f)
                     default_config.update(user_config)
             except Exception as e:
-                print(f"[WARN] Failed to load config.json: {e}, using defaults")
+                print("[WARN] Failed to load config.json: {}, using defaults".format(e))
         else:
             # Create default config file
             self.save_config(default_config)
@@ -126,14 +127,14 @@ class DetectionGUI:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print(f"[ERROR] Failed to save config.json: {e}")
+            print("[ERROR] Failed to save config.json: {}".format(e))
     
     def init_detector(self):
         """Initialize LiveWireDetector"""
         model_path = Path(self.config.get('model_path', str(MODELS_DIR / 'best_cropped.onnx')))
         
         if not model_path.exists():
-            messagebox.showerror("Error", f"Model not found: {model_path}")
+            messagebox.showerror("Error", "Model not found: {}".format(model_path))
             return
         
         try:
@@ -143,8 +144,8 @@ class DetectionGUI:
             # Load per-class thresholds from config
             self.load_thresholds()
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to initialize detector: {e}")
-            print(f"[ERROR] Detector initialization failed: {e}")
+            messagebox.showerror("Error", "Failed to initialize detector: {}".format(e))
+            print("[ERROR] Detector initialization failed: {}".format(e))
     
     def setup_gui(self):
         """Setup GUI layout - TD (Top-Down) layout"""
@@ -286,7 +287,7 @@ class DetectionGUI:
             color = self.detector.colors.get(class_name, (128, 128, 128))
             # Convert BGR to RGB for display
             color_rgb = (color[2], color[1], color[0])
-            hex_color = f"#{color_rgb[0]:02x}{color_rgb[1]:02x}{color_rgb[2]:02x}"
+            hex_color = "#{:02x}{:02x}{:02x}".format(color_rgb[0], color_rgb[1], color_rgb[2])
             
             # Create frame for each color item
             item_frame = ttk.Frame(self.legend_container)
@@ -325,7 +326,7 @@ class DetectionGUI:
             # Get color for this class
             color = self.detector.colors.get(class_name, (128, 128, 128))
             color_rgb = (color[2], color[1], color[0])
-            hex_color = f"#{color_rgb[0]:02x}{color_rgb[1]:02x}{color_rgb[2]:02x}"
+            hex_color = "#{:02x}{:02x}{:02x}".format(color_rgb[0], color_rgb[1], color_rgb[2])
             
             # Create frame for each slider
             slider_frame = ttk.Frame(self.threshold_container)
@@ -338,7 +339,7 @@ class DetectionGUI:
             color_indicator.create_rectangle(2, 2, 18, 18, fill=hex_color, outline="gray", width=1)
             
             # Class name label
-            class_label = ttk.Label(slider_frame, text=f"{class_name}:", width=10, anchor=tk.W)
+            class_label = ttk.Label(slider_frame, text="{}:".format(class_name), width=10, anchor=tk.W)
             class_label.pack(side=tk.LEFT, padx=(0, 5))
             
             # Slider (range 0.0 to 1.0, resolution 0.01)
@@ -358,7 +359,7 @@ class DetectionGUI:
             threshold = self.config.get('thresholds', {}).get(class_name, 0.25)
             threshold = max(0.0, min(1.0, float(threshold)))  # Validate range
             slider.set(threshold)
-            value_label.config(text=f"{threshold:.2f}")
+            value_label.config(text="{:.2f}".format(threshold))
     
     def load_thresholds(self):
         """Load per-class thresholds from config and apply to detector"""
@@ -377,7 +378,7 @@ class DetectionGUI:
         # Apply to detector
         if thresholds_dict:
             self.detector.set_class_thresholds(thresholds_dict)
-            print(f"[INFO] Loaded thresholds from config: {thresholds_dict}")
+            print("[INFO] Loaded thresholds from config: {}".format(thresholds_dict))
     
     def on_threshold_change(self, class_name, value):
         """Callback when threshold slider changes"""
@@ -391,7 +392,7 @@ class DetectionGUI:
             
             # Update value label
             if class_name in self.threshold_labels:
-                self.threshold_labels[class_name].config(text=f"{threshold:.2f}")
+                self.threshold_labels[class_name].config(text="{:.2f}".format(threshold))
             
             # Cancel previous save timer if exists
             if self.save_thresholds_timer is not None:
@@ -401,7 +402,7 @@ class DetectionGUI:
             self.save_thresholds_timer = self.root.after(500, self._debounced_save_thresholds)
             
         except Exception as e:
-            print(f"[ERROR] Failed to update threshold for {class_name}: {e}")
+            print("[ERROR] Failed to update threshold for {}: {}".format(class_name, e))
     
     def _debounced_save_thresholds(self):
         """Debounced save thresholds (called after user stops dragging)"""
@@ -438,19 +439,19 @@ class DetectionGUI:
         fps = self.config.get('camera_fps', 30)
         use_gstreamer = self.config.get('use_gstreamer', True)  # Default True for Jetson (proven to work)
         
-        print(f"[DEBUG] Camera config: source={source}, width={width}, height={height}, fps={fps}, use_gstreamer={use_gstreamer}")
+        print("[DEBUG] Camera config: source={}, width={}, height={}, fps={}, use_gstreamer={}".format(source, width, height, fps, use_gstreamer))
         
         try:
             self.capture = open_capture(source, width, height, fps, use_gstreamer)
             if not self.capture or not self.capture.isOpened():
                 error_msg = (
-                    f"Failed to open camera source: {source}\n\n"
+                    "Failed to open camera source: {}\n\n"
                     "Possible solutions:\n"
                     "1. Check camera is connected\n"
                     "2. Try different camera source (0, 1, 2...)\n"
                     "3. Check camera permissions\n"
                     "4. Restart the application"
-                )
+                ).format(source)
                 messagebox.showerror("Camera Error", error_msg)
                 return
             
@@ -469,7 +470,7 @@ class DetectionGUI:
             
             if not ret or test_frame is None:
                 error_msg = (
-                    f"Camera opened but cannot read frames\n\n"
+                    "Camera opened but cannot read frames\n\n"
                     "Possible solutions:\n"
                     "1. Camera may be in use by another application\n"
                     "2. Try different camera source\n"
@@ -499,9 +500,9 @@ class DetectionGUI:
             
             print("[INFO] Camera capture started successfully (detection runs in main thread)")
         except Exception as e:
-            error_msg = f"Failed to start camera: {e}\n\nCheck camera connection and try again."
+            error_msg = "Failed to start camera: {}\n\nCheck camera connection and try again.".format(e)
             messagebox.showerror("Camera Error", error_msg)
-            print(f"[ERROR] Camera start failed: {e}")
+            print("[ERROR] Camera start failed: {}".format(e))
     
     def capture_loop(self):
         """
@@ -575,7 +576,7 @@ class DetectionGUI:
                 self.current_frame = annotated_roi
                 self.current_detections = detections
             except Exception as e:
-                print(f"[ERROR] Detection failed: {e}")
+                print("[ERROR] Detection failed: {}".format(e))
                 import traceback
                 traceback.print_exc()
                 self.current_frame = roi_frame
@@ -597,7 +598,7 @@ class DetectionGUI:
         try:
             self.update_display()
         except Exception as e:
-            print(f"[ERROR] Display update exception: {e}")
+            print("[ERROR] Display update exception: {}".format(e))
         finally:
             self.pending_gui_updates = max(0, self.pending_gui_updates - 1)
     
@@ -660,8 +661,8 @@ class DetectionGUI:
             self.video_label.image = photo  # Keep a reference
             
             # Update status labels (always update - lightweight)
-            self.fps_label.config(text=f"FPS: {self.fps:.1f}")
-            self.detection_label.config(text=f"Detections: {len(self.current_detections)}")
+            self.fps_label.config(text="FPS: {:.1f}".format(self.fps))
+            self.detection_label.config(text="Detections: {}".format(len(self.current_detections)))
             
             # Update visual alerts periodically (not every frame for performance)
             current_time = time.time()
@@ -699,7 +700,7 @@ class DetectionGUI:
                 self.last_legend_update = current_time
         
         except Exception as e:
-            print(f"[ERROR] Display update failed: {e}")
+            print("[ERROR] Display update failed: {}".format(e))
     
     def update_defect_alerts(self):
         """Update visual alerts and defect status display"""
@@ -719,7 +720,7 @@ class DetectionGUI:
             if defect_detections:
                 self.defect_alert_label.config(foreground="red")
                 self.defect_status_label.config(
-                    text=f"Status: DEFECT ({len(defect_detections)})",
+                    text="Status: DEFECT ({})".format(len(defect_detections)),
                     foreground="red"
                 )
             else:
@@ -733,7 +734,7 @@ class DetectionGUI:
             if active_classes:
                 classes_str = ", ".join(sorted(active_classes))
                 self.active_classes_label.config(
-                    text=f"Active: {classes_str}",
+                    text="Active: {}".format(classes_str),
                     foreground="red"
                 )
             else:
@@ -742,7 +743,7 @@ class DetectionGUI:
                     foreground="gray"
                 )
         except Exception as e:
-            print(f"[ERROR] Defect alerts update failed: {e}")
+            print("[ERROR] Defect alerts update failed: {}".format(e))
     
     def start_session(self):
         """Start detection session"""
@@ -772,7 +773,7 @@ class DetectionGUI:
         if self.session_start_time:
             duration = time.time() - self.session_start_time
             self.session_duration_label.config(
-                text=f"Duration: {duration:.1f}s ({duration/60:.1f}min)",
+                text="Duration: {:.1f}s ({:.1f}min)".format(duration, duration/60),
                 foreground="gray"
             )
             self.session_start_time = None
@@ -788,11 +789,11 @@ class DetectionGUI:
         if log_path:
             self.current_log_path = log_path
             self.log_path_label.config(
-                text=f"Log file: {log_path.name}",
+                text="Log file: {}".format(log_path.name),
                 foreground="blue"
             )
             self.open_log_btn.config(state=tk.NORMAL)  # Enable open button
-            print(f"[INFO] Session log saved: {log_path}")
+            print("[INFO] Session log saved: {}".format(log_path))
         else:
             self.current_log_path = None
             self.log_path_label.config(
@@ -812,12 +813,12 @@ class DetectionGUI:
             seconds = int(duration % 60)
             if minutes > 0:
                 self.session_duration_label.config(
-                    text=f"Duration: {minutes}m {seconds}s",
+                    text="Duration: {}m {}s".format(minutes, seconds),
                     foreground="green"
                 )
             else:
                 self.session_duration_label.config(
-                    text=f"Duration: {seconds}s",
+                    text="Duration: {}s".format(seconds),
                     foreground="green"
                 )
             # Schedule next update
@@ -843,10 +844,10 @@ class DetectionGUI:
             else:  # Linux
                 subprocess.run(["xdg-open", str(self.current_log_path)])
             
-            print(f"[INFO] Opened log file: {self.current_log_path}")
+            print("[INFO] Opened log file: {}".format(self.current_log_path))
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to open log file: {e}")
-            print(f"[ERROR] Failed to open log file: {e}")
+            messagebox.showerror("Error", "Failed to open log file: {}".format(e))
+            print("[ERROR] Failed to open log file: {}".format(e))
     
     def on_closing(self):
         """Handle window close event"""
@@ -922,7 +923,7 @@ class DetectionGUI:
                     self.log_widgets['session_id'] = ttk.Label(self.log_container, 
                                                               font=("Courier", 9))
                     self.log_widgets['session_id'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
-                self.log_widgets['session_id'].config(text=f"Session ID: {stats['session_id']}")
+                self.log_widgets['session_id'].config(text="Session ID: {}".format(stats['session_id']))
                 row += 1
             elif 'session_id' in self.log_widgets:
                 self.log_widgets['session_id'].grid_remove()
@@ -931,7 +932,7 @@ class DetectionGUI:
             if 'frames' not in self.log_widgets:
                 self.log_widgets['frames'] = ttk.Label(self.log_container, font=("Courier", 9))
                 self.log_widgets['frames'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
-            self.log_widgets['frames'].config(text=f"Frames Processed: {stats['frames_processed']}")
+            self.log_widgets['frames'].config(text="Frames Processed: {}".format(stats['frames_processed']))
             self.log_widgets['frames'].grid()
             row += 1
             
@@ -947,13 +948,13 @@ class DetectionGUI:
             if 'total_defects' not in self.log_widgets:
                 self.log_widgets['total_defects'] = ttk.Label(self.log_container, font=("Courier", 9))
                 self.log_widgets['total_defects'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
-            self.log_widgets['total_defects'].config(text=f"Total Defects: {stats['total_defects']}")
+            self.log_widgets['total_defects'].config(text="Total Defects: {}".format(stats['total_defects']))
             row += 1
             
             if 'total_clusters' not in self.log_widgets:
                 self.log_widgets['total_clusters'] = ttk.Label(self.log_container, font=("Courier", 9))
                 self.log_widgets['total_clusters'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
-            self.log_widgets['total_clusters'].config(text=f"Total Clusters: {stats['total_clusters']}")
+            self.log_widgets['total_clusters'].config(text="Total Clusters: {}".format(stats['total_clusters']))
             row += 1
             
             # Active cluster section (reuse widgets)
@@ -980,11 +981,11 @@ class DetectionGUI:
                     row += 1
                 
                 # Update widget text
-                self.log_widgets['cluster_duration'].config(text=f"Duration: {cluster['duration']:.2f}s")
-                self.log_widgets['cluster_frames'].config(text=f"Frames: {cluster['frame_count']}")
-                self.log_widgets['cluster_defects'].config(text=f"Defects: {cluster['defect_count']}")
+                self.log_widgets['cluster_duration'].config(text="Duration: {:.2f}s".format(cluster['duration']))
+                self.log_widgets['cluster_frames'].config(text="Frames: {}".format(cluster['frame_count']))
+                self.log_widgets['cluster_defects'].config(text="Defects: {}".format(cluster['defect_count']))
                 classes_str = ', '.join(cluster['classes'].keys()) if cluster['classes'] else 'None'
-                self.log_widgets['cluster_classes'].config(text=f"Classes: {classes_str}")
+                self.log_widgets['cluster_classes'].config(text="Classes: {}".format(classes_str))
             else:
                 # Hide cluster detail widgets
                 for key in ['cluster_duration', 'cluster_frames', 'cluster_defects', 'cluster_classes']:
@@ -1015,14 +1016,14 @@ class DetectionGUI:
                 if 'timing_duration' not in self.log_widgets:
                     self.log_widgets['timing_duration'] = ttk.Label(self.log_container, font=("Courier", 9))
                     self.log_widgets['timing_duration'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0))
-                self.log_widgets['timing_duration'].config(text=f"Duration: {timing['duration']:.3f}s")
+                self.log_widgets['timing_duration'].config(text="Duration: {:.3f}s".format(timing['duration']))
                 self.log_widgets['timing_duration'].grid()
                 row += 1
                 
                 if 'timing_frames' not in self.log_widgets:
                     self.log_widgets['timing_frames'] = ttk.Label(self.log_container, font=("Courier", 9))
                     self.log_widgets['timing_frames'].grid(row=row, column=0, sticky=tk.W, padx=(10, 0), pady=(0, 5))
-                self.log_widgets['timing_frames'].config(text=f"Frames: {timing['start_frame']} → {timing['end_frame']}")
+                self.log_widgets['timing_frames'].config(text="Frames: {} → {}".format(timing['start_frame'], timing['end_frame']))
                 self.log_widgets['timing_frames'].grid()
                 row += 1
             else:
@@ -1039,16 +1040,16 @@ class DetectionGUI:
                 self.log_widgets['class_header'].grid(row=row, column=0, sticky=tk.W, pady=(5, 2))
             
             if stats['class_counts']:
-                class_summary = ", ".join([f"{k}:{v}" for k, v in sorted(stats['class_counts'].items(), 
+                class_summary = ", ".join(["{}:{}".format(k, v) for k, v in sorted(stats['class_counts'].items(), 
                                                                         key=lambda x: x[1], reverse=True)[:5]])
-                self.log_widgets['class_header'].config(text=f"--- Per-Class Counts: {class_summary} ---")
+                self.log_widgets['class_header'].config(text="--- Per-Class Counts: {} ---".format(class_summary))
                 self.log_widgets['class_header'].grid()
             else:
                 self.log_widgets['class_header'].config(text="--- Per-Class Counts: No defects ---")
                 self.log_widgets['class_header'].grid()
             
         except Exception as e:
-            print(f"[ERROR] Failed to update log display: {e}")
+            print("[ERROR] Failed to update log display: {}".format(e))
             import traceback
             traceback.print_exc()
 

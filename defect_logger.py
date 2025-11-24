@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Wire Defect Detection - Defect Logger Module
 Tracks defect clusters, normal stripes, and generates human-friendly log files
@@ -110,7 +111,7 @@ class DefectLogger:
         self.class_detection_counts = defaultdict(int)
         self.all_detections = []
         
-        print(f"[INFO] Defect logging session started: {self.session_id}")
+        print("[INFO] Defect logging session started: {}".format(self.session_id))
     
     def stop_session(self):
         """Stop the current logging session"""
@@ -127,7 +128,7 @@ class DefectLogger:
             self.closed_clusters.append(self.active_cluster)
             self.active_cluster = None
         
-        print(f"[INFO] Defect logging session stopped: {self.session_id}")
+        print("[INFO] Defect logging session stopped: {}".format(self.session_id))
     
     def log_defects(self, frame_number: int, detections: List[Dict]):
         """
@@ -240,7 +241,7 @@ class DefectLogger:
             return None
         
         # Generate log file path
-        log_filename = f"session_{self.session_id}.log"
+        log_filename = "session_{}.log".format(self.session_id)
         log_path = self.log_dir / log_filename
         
         try:
@@ -253,10 +254,10 @@ class DefectLogger:
                 self._write_per_class_stats(f)
                 self._write_log_footer(f)
             
-            print(f"[INFO] Session log saved: {log_path}")
+            print("[INFO] Session log saved: {}".format(log_path))
             return log_path
         except Exception as e:
-            print(f"[ERROR] Failed to save session log: {e}")
+            print("[ERROR] Failed to save session log: {}".format(e))
             return None
     
     def _write_log_header(self, f):
@@ -264,8 +265,8 @@ class DefectLogger:
         f.write("=" * 80 + "\n")
         f.write("WIRE DEFECT DETECTION - SESSION LOG\n")
         f.write("=" * 80 + "\n")
-        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Session ID: {self.session_id}\n")
+        f.write("Generated: {}\n".format(datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        f.write("Session ID: {}\n".format(self.session_id))
         f.write("\n")
     
     def _write_session_info(self, f):
@@ -275,17 +276,17 @@ class DefectLogger:
         f.write("-" * 80 + "\n")
         
         start_dt = datetime.fromtimestamp(self.session_start_time)
-        f.write(f"Start Time: {start_dt.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("Start Time: {}\n".format(start_dt.strftime('%Y-%m-%d %H:%M:%S')))
         
         if self.session_end_time:
             end_dt = datetime.fromtimestamp(self.session_end_time)
             duration = self.session_end_time - self.session_start_time
-            f.write(f"End Time:   {end_dt.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Duration:   {duration:.2f} seconds ({duration/60:.2f} minutes)\n")
+            f.write("End Time:   {}\n".format(end_dt.strftime('%Y-%m-%d %H:%M:%S')))
+            f.write("Duration:   {:.2f} seconds ({:.2f} minutes)\n".format(duration, duration/60))
         else:
             f.write("End Time:   Session still active\n")
         
-        f.write(f"Frames Processed: {self.current_frame}\n")
+        f.write("Frames Processed: {}\n".format(self.current_frame))
         f.write("\n")
     
     def _write_stripe_timing(self, f):
@@ -299,15 +300,15 @@ class DefectLogger:
             start_dt = datetime.fromtimestamp(timing['start_time'])
             end_dt = datetime.fromtimestamp(timing['end_time'])
             
-            f.write(f"First Normal Stripe:\n")
-            f.write(f"  Frame: {timing['start_frame']}\n")
-            f.write(f"  Time:  {start_dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}\n")
-            f.write(f"\n")
-            f.write(f"Last Normal Stripe:\n")
-            f.write(f"  Frame: {timing['end_frame']}\n")
-            f.write(f"  Time:  {end_dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}\n")
-            f.write(f"\n")
-            f.write(f"Stripe Duration: {timing['duration']:.3f} seconds\n")
+            f.write("First Normal Stripe:\n")
+            f.write("  Frame: {}\n".format(timing['start_frame']))
+            f.write("  Time:  {}\n".format(start_dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]))
+            f.write("\n")
+            f.write("Last Normal Stripe:\n")
+            f.write("  Frame: {}\n".format(timing['end_frame']))
+            f.write("  Time:  {}\n".format(end_dt.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]))
+            f.write("\n")
+            f.write("Stripe Duration: {:.3f} seconds\n".format(timing['duration']))
         else:
             f.write("No normal stripes detected in this session.\n")
         
@@ -324,10 +325,10 @@ class DefectLogger:
         active_cluster_info = ""
         if self.active_cluster:
             total_clusters += 1
-            active_cluster_info = f" (1 active, {len(self.closed_clusters)} closed)"
+            active_cluster_info = " (1 active, {} closed)".format(len(self.closed_clusters))
         
-        f.write(f"Total Defects Detected: {total_defects}\n")
-        f.write(f"Total Defect Clusters: {total_clusters}{active_cluster_info}\n")
+        f.write("Total Defects Detected: {}\n".format(total_defects))
+        f.write("Total Defect Clusters: {}{}\n".format(total_clusters, active_cluster_info))
         f.write("\n")
     
     def _write_defect_clusters(self, f):
@@ -346,22 +347,22 @@ class DefectLogger:
             start_dt = datetime.fromtimestamp(cluster.start_time)
             end_dt = datetime.fromtimestamp(cluster.end_time)
             
-            f.write(f"\nCluster {i} (Closed):\n")
-            f.write(f"  Start: Frame {cluster.start_frame} at {start_dt.strftime('%H:%M:%S.%f')[:-3]}\n")
-            f.write(f"  End:   Frame {cluster.end_frame} at {end_dt.strftime('%H:%M:%S.%f')[:-3]}\n")
-            f.write(f"  Duration: {cluster.get_duration():.3f} seconds ({cluster.get_frame_count()} frames)\n")
-            f.write(f"  Defects: {len(cluster.detections)}\n")
-            f.write(f"  Classes: {dict(cluster.class_counts)}\n")
+            f.write("\nCluster {} (Closed):\n".format(i))
+            f.write("  Start: Frame {} at {}\n".format(cluster.start_frame, start_dt.strftime('%H:%M:%S.%f')[:-3]))
+            f.write("  End:   Frame {} at {}\n".format(cluster.end_frame, end_dt.strftime('%H:%M:%S.%f')[:-3]))
+            f.write("  Duration: {:.3f} seconds ({} frames)\n".format(cluster.get_duration(), cluster.get_frame_count()))
+            f.write("  Defects: {}\n".format(len(cluster.detections)))
+            f.write("  Classes: {}\n".format(dict(cluster.class_counts)))
         
         # Write active cluster if exists
         if self.active_cluster:
             start_dt = datetime.fromtimestamp(self.active_cluster.start_time)
-            f.write(f"\nCluster {len(self.closed_clusters) + 1} (Active):\n")
-            f.write(f"  Start: Frame {self.active_cluster.start_frame} at {start_dt.strftime('%H:%M:%S.%f')[:-3]}\n")
-            f.write(f"  End:   Frame {self.active_cluster.end_frame} (ongoing)\n")
-            f.write(f"  Duration: {self.active_cluster.get_duration():.3f} seconds ({self.active_cluster.get_frame_count()} frames)\n")
-            f.write(f"  Defects: {len(self.active_cluster.detections)}\n")
-            f.write(f"  Classes: {dict(self.active_cluster.class_counts)}\n")
+            f.write("\nCluster {} (Active):\n".format(len(self.closed_clusters) + 1))
+            f.write("  Start: Frame {} at {}\n".format(self.active_cluster.start_frame, start_dt.strftime('%H:%M:%S.%f')[:-3]))
+            f.write("  End:   Frame {} (ongoing)\n".format(self.active_cluster.end_frame))
+            f.write("  Duration: {:.3f} seconds ({} frames)\n".format(self.active_cluster.get_duration(), self.active_cluster.get_frame_count()))
+            f.write("  Defects: {}\n".format(len(self.active_cluster.detections)))
+            f.write("  Classes: {}\n".format(dict(self.active_cluster.class_counts)))
         
         f.write("\n")
     
@@ -384,18 +385,18 @@ class DefectLogger:
         )
         
         for class_name, count in sorted_classes:
-            f.write(f"\n{class_name}:\n")
-            f.write(f"  Total Detections: {count}\n")
+            f.write("\n{}:\n".format(class_name))
+            f.write("  Total Detections: {}\n".format(count))
             
             if class_name in self.class_first_appearance:
                 first = self.class_first_appearance[class_name]
                 first_dt = datetime.fromtimestamp(first['time'])
-                f.write(f"  First Appearance: Frame {first['frame']} at {first_dt.strftime('%H:%M:%S.%f')[:-3]}\n")
+                f.write("  First Appearance: Frame {} at {}\n".format(first['frame'], first_dt.strftime('%H:%M:%S.%f')[:-3]))
             
             if class_name in self.class_last_appearance:
                 last = self.class_last_appearance[class_name]
                 last_dt = datetime.fromtimestamp(last['time'])
-                f.write(f"  Last Appearance:  Frame {last['frame']} at {last_dt.strftime('%H:%M:%S.%f')[:-3]}\n")
+                f.write("  Last Appearance:  Frame {} at {}\n".format(last['frame'], last_dt.strftime('%H:%M:%S.%f')[:-3]))
         
         f.write("\n")
     

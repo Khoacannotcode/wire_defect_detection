@@ -63,17 +63,18 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
     
     cap = None
     
-    print(f"[DEBUG] Camera capture settings: source={source_int}, width={width}, height={height}, fps={fps}, use_gstreamer={use_gstreamer}")
+    print("[DEBUG] Camera capture settings: source={}, width={}, height={}, fps={}, use_gstreamer={}".format(source_int, width, height, fps, use_gstreamer))
     
     # CRITICAL: Check if camera is available before trying to open
     # "Failed to create CaptureSession" usually means camera is in use
     import subprocess
     try:
-        # Check if any process is using video devices
-        result = subprocess.run(['lsof', '/dev/video0'], capture_output=True, text=True, timeout=2)
-        if result.returncode == 0 and result.stdout:
+        # Check if any process is using video devices (Python 3.5 compatible)
+        result = subprocess.Popen(['lsof', '/dev/video0'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        stdout, stderr = result.communicate(timeout=2)
+        if result.returncode == 0 and stdout:
             print("[WARN] Camera /dev/video0 appears to be in use by another process:")
-            print(result.stdout)
+            print(stdout)
             print("[INFO] You may need to kill the process or wait for it to finish")
     except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
         # lsof not available or timeout - continue anyway
@@ -137,7 +138,7 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
                     'appsink max-buffers=1 drop=true'
                 ).format(camera_props, source_int, width, height)
             
-            print(f"[DEBUG] GStreamer pipeline: {pipeline}")
+            print("[DEBUG] GStreamer pipeline: {}".format(pipeline))
             print("[DEBUG] Creating VideoCapture with CAP_GSTREAMER...")
             
             # CRITICAL: Add small delay before opening camera
@@ -146,7 +147,7 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
             time.sleep(0.5)
             
             cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-            print(f"[DEBUG] VideoCapture.isOpened() = {cap.isOpened()}")
+            print("[DEBUG] VideoCapture.isOpened() = {}".format(cap.isOpened()))
             
             # CRITICAL: If "Failed to create CaptureSession", wait a bit and retry once
             if not cap.isOpened():
@@ -155,7 +156,7 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
                 if cap:
                     cap.release()
                 cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-                print(f"[DEBUG] Retry - VideoCapture.isOpened() = {cap.isOpened()}")
+                print("[DEBUG] Retry - VideoCapture.isOpened() = {}".format(cap.isOpened()))
             
             if cap.isOpened():
                 # Test read to verify camera actually works (with timeout)
@@ -173,7 +174,7 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
                         break
                 
                 if ret and test_frame is not None:
-                    print(f"[INFO] Camera opened successfully using GStreamer (with tuning parameters)")
+                    print("[INFO] Camera opened successfully using GStreamer (with tuning parameters)")
                     return cap
                 else:
                     print("[WARN] GStreamer opened but cannot read frames after 5 attempts, falling back to OpenCV")
@@ -183,7 +184,7 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
                 print("[WARN] GStreamer failed to open camera, falling back to OpenCV")
                 cap = None
         except Exception as e:
-            print(f"[WARN] GStreamer error: {e}, falling back to OpenCV")
+            print("[WARN] GStreamer error: {}, falling back to OpenCV".format(e))
             if cap:
                 try:
                     cap.release()
@@ -195,7 +196,7 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
     if cap is None:
         print("[INFO] Falling back to standard OpenCV VideoCapture...")
         try:
-            print(f"[DEBUG] Creating VideoCapture with source={source_int} (standard OpenCV)...")
+            print("[DEBUG] Creating VideoCapture with source={} (standard OpenCV)...".format(source_int))
             cap = cv2.VideoCapture(source_int)
             if cap.isOpened():
                 # Set properties
@@ -208,17 +209,17 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
                 if ret and test_frame is not None:
                     actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                     actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    print(f"[INFO] Camera opened successfully using OpenCV (actual resolution: {actual_width}x{actual_height})")
+                    print("[INFO] Camera opened successfully using OpenCV (actual resolution: {}x{})".format(actual_width, actual_height))
                     return cap
                 else:
                     print("[ERROR] Camera opened but cannot read frames")
                     cap.release()
                     return None
             else:
-                print(f"[ERROR] Failed to open camera source: {source_int}")
+                print("[ERROR] Failed to open camera source: {}".format(source_int))
                 return None
         except Exception as e:
-            print(f"[ERROR] OpenCV camera error: {e}")
+            print("[ERROR] OpenCV camera error: {}".format(e))
             return None
     
     return cap
@@ -246,24 +247,24 @@ class LiveWireDetector:
             engine_path = model_path.with_suffix('.engine')
             # Auto-build engine if it doesn't exist (like test_with_images.py)
             if not engine_path.exists():
-                print(f"[INFO] TensorRT engine not found at '{engine_path}'.")
+                print("[INFO] TensorRT engine not found at '{}'.".format(engine_path))
                 print("[INFO] Attempting to build engine from ONNX model...")
                 if not model_path.exists():
                     raise FileNotFoundError(
-                        f"ONNX model not found at '{model_path}'. Cannot build engine."
+                        "ONNX model not found at '{}'. Cannot build engine.".format(model_path)
                     )
                 
                 if build_engine(model_path, engine_path):
                     print("[OK] Successfully built TensorRT engine!")
                 else:
                     raise RuntimeError(
-                        f"Failed to build TensorRT engine from {model_path}. "
-                        f"Please check TensorRT installation and ONNX model validity."
+                        "Failed to build TensorRT engine from {}. "
+                        "Please check TensorRT installation and ONNX model validity.".format(model_path)
                     )
         elif model_path.suffix == '.engine':
             engine_path = model_path
         else:
-            raise ValueError(f"Unsupported model format: {model_path.suffix}. Use .onnx or .engine")
+            raise ValueError("Unsupported model format: {}. Use .onnx or .engine".format(model_path.suffix))
         
         # Initialize TRTDetector
         self.trt_detector = TRTDetector(str(engine_path))
@@ -467,7 +468,7 @@ def main():
     
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
-    print(f"[INFO] Video source opened: {source}")
+    print("[INFO] Video source opened: {}".format(source))
 
     # 3. Main loop
     fps_start_time = time.perf_counter()
@@ -493,12 +494,12 @@ def main():
         # Draw detections and FPS on the frame
         for det in detections:
             box = det['box']
-            label = f"{det['class_name']}: {det['confidence']:.2f}"
+            label = "{}: {:.2f}".format(det['class_name'], det['confidence'])
             color = CLASS_COLORS.get(det['class_name'], DEFAULT_COLOR)
             cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), color, 2)
             cv2.putText(frame, label, (box[0], box[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-        cv2.putText(frame, f"FPS: {display_fps}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(frame, "FPS: {}".format(display_fps), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         
         cv2.imshow("TensorRT Detection", frame)
 

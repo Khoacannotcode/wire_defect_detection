@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Task 18, Phase 3: TensorRT Inference Module (Re-created)
 - Contains the core logic for running inference with a TensorRT engine.
@@ -31,10 +32,10 @@ class TRTDetector:
             # Get device info without creating new context
             device = cuda.Device(0)
             device_name = device.name()
-            print(f"[INFO] CUDA device detected: {device_name}")
+            print("[INFO] CUDA device detected: {}".format(device_name))
         except Exception as e:
-            print(f"[ERROR] Failed to detect CUDA device: {e}")
-            raise RuntimeError(f"CUDA device not available: {e}. Please check CUDA installation.")
+            print("[ERROR] Failed to detect CUDA device: {}".format(e))
+            raise RuntimeError("CUDA device not available: {}. Please check CUDA installation.".format(e))
         
         self.engine = self._load_engine()
         # Store engine but create execution context lazily per-thread
@@ -58,9 +59,9 @@ class TRTDetector:
         for i in range(self.engine.num_bindings):
             if not self.engine.binding_is_input(i):
                 self.output_shape = self.engine.get_binding_shape(i)
-                print(f"[DEBUG] Output binding shape: {self.output_shape}")
-                print(f"[DEBUG] Number of classes loaded: {len(self.class_names)}")
-                print(f"[DEBUG] Class names: {self.class_names}")
+                print("[DEBUG] Output binding shape: {}".format(self.output_shape))
+                print("[DEBUG] Number of classes loaded: {}".format(len(self.class_names)))
+                print("[DEBUG] Class names: {}".format(self.class_names))
                 break
     
     def _get_context_and_stream(self):
@@ -94,7 +95,7 @@ class TRTDetector:
             with self._context_lock:
                 # Double-check after acquiring lock
                 if thread_id not in self._thread_cuda_contexts:
-                    print(f"[DEBUG] Creating CUDA context, TensorRT execution context, CUDA stream, and buffers for thread {thread_id}")
+                    print("[DEBUG] Creating CUDA context, TensorRT execution context, CUDA stream, and buffers for thread {}".format(thread_id))
                     
                     # CRITICAL: Create CUDA context for this thread
                     # This is required because pycuda.autoinit only creates context for main thread
@@ -104,10 +105,10 @@ class TRTDetector:
                         cuda_context = device.make_context()
                         # Context is automatically pushed when created
                         self._thread_cuda_contexts[thread_id] = cuda_context
-                        print(f"[DEBUG] CUDA context created and pushed for thread {thread_id}")
+                        print("[DEBUG] CUDA context created and pushed for thread {}".format(thread_id))
                     except Exception as e:
-                        print(f"[ERROR] Failed to create CUDA context for thread {thread_id}: {e}")
-                        raise RuntimeError(f"CUDA context creation failed: {e}")
+                        print("[ERROR] Failed to create CUDA context for thread {}: {}".format(thread_id, e))
+                        raise RuntimeError("CUDA context creation failed: {}".format(e))
                     
                     # CRITICAL: Allocate buffers in THIS thread's CUDA context
                     # CUDA device memory pointers are only valid within the same CUDA context
@@ -118,62 +119,62 @@ class TRTDetector:
                             'outputs': outputs,
                             'bindings': bindings
                         }
-                        print(f"[DEBUG] CUDA buffers allocated for thread {thread_id}")
+                        print("[DEBUG] CUDA buffers allocated for thread {}".format(thread_id))
                     except Exception as e:
-                        print(f"[ERROR] Failed to allocate CUDA buffers for thread {thread_id}: {e}")
+                        print("[ERROR] Failed to allocate CUDA buffers for thread {}: {}".format(thread_id, e))
                         # Cleanup CUDA context if buffer allocation fails
                         try:
                             cuda_context.pop()
                             cuda_context.detach()
                         except:
                             pass
-                        raise RuntimeError(f"CUDA buffer allocation failed: {e}")
+                        raise RuntimeError("CUDA buffer allocation failed: {}".format(e))
                     
                     # Create TensorRT execution context (requires active CUDA context)
                     try:
                         trt_context = self.engine.create_execution_context()
                         self._thread_contexts[thread_id] = trt_context
                     except Exception as e:
-                        print(f"[ERROR] Failed to create TensorRT execution context for thread {thread_id}: {e}")
+                        print("[ERROR] Failed to create TensorRT execution context for thread {}: {}".format(thread_id, e))
                         # Cleanup CUDA context if TRT context creation fails
                         try:
                             cuda_context.pop()
                             cuda_context.detach()
                         except:
                             pass
-                        raise RuntimeError(f"TensorRT execution context creation failed: {e}")
+                        raise RuntimeError("TensorRT execution context creation failed: {}".format(e))
                     
                     # Create CUDA stream (requires active CUDA context)
                     try:
                         stream = cuda.Stream()
                         self._thread_streams[thread_id] = stream
                     except Exception as e:
-                        print(f"[ERROR] Failed to create CUDA stream for thread {thread_id}: {e}")
+                        print("[ERROR] Failed to create CUDA stream for thread {}: {}".format(thread_id, e))
                         # Cleanup if stream creation fails
                         try:
                             cuda_context.pop()
                             cuda_context.detach()
                         except:
                             pass
-                        raise RuntimeError(f"CUDA stream creation failed: {e}")
+                        raise RuntimeError("CUDA stream creation failed: {}".format(e))
         
         return self._thread_contexts[thread_id], self._thread_streams[thread_id], self._thread_buffers[thread_id]
 
     def _load_class_names(self):
         """Loads class names from a file named class_names.txt in the same directory as the engine."""
         class_names_path = self.engine_path.parent / "class_names.txt"
-        print(f"[INFO] Loading class names from: {class_names_path}")
+        print("[INFO] Loading class names from: {}".format(class_names_path))
         try:
             with open(class_names_path, "r") as f:
                 return [line.strip() for line in f.readlines() if line.strip()]
         except FileNotFoundError:
-            print(f"[ERROR] '{class_names_path}' not found. Cannot determine class names.")
+            print("[ERROR] '{}' not found. Cannot determine class names.".format(class_names_path))
             raise SystemExit("Aborting: Missing class_names.txt file.")
 
     def _load_engine(self):
-        print(f"[INFO] Loading TensorRT engine from: {self.engine_path}")
+        print("[INFO] Loading TensorRT engine from: {}".format(self.engine_path))
         if not self.engine_path.exists():
-            print(f"[ERROR] Engine file not found at '{self.engine_path}'.")
+            print("[ERROR] Engine file not found at '{}'.".format(self.engine_path))
             raise SystemExit("Aborting: Please generate the .engine file first.")
         with open(self.engine_path, "rb") as f, trt.Runtime(TRT_LOGGER) as runtime:
             return runtime.deserialize_cuda_engine(f.read())
@@ -215,7 +216,7 @@ class TRTDetector:
             # Preprocess
             input_image, ratio, dwdh = self._preprocess(image)
         except Exception as e:
-            print(f"[ERROR] Preprocessing failed: {e}")
+            print("[ERROR] Preprocessing failed: {}".format(e))
             return []
         
         # CRITICAL: Get thread-specific execution context, CUDA stream, and buffers
@@ -236,7 +237,7 @@ class TRTDetector:
                 np.copyto(inputs[0]['host'], input_image.ravel())
                 cuda.memcpy_htod_async(inputs[0]['device'], inputs[0]['host'], stream)
             except Exception as e:
-                print(f"[ERROR] Failed to copy input to device: {e}")
+                print("[ERROR] Failed to copy input to device: {}".format(e))
                 return []
 
             # Run inference using thread-specific context, stream, and bindings
@@ -246,7 +247,7 @@ class TRTDetector:
                     print("[ERROR] TensorRT inference execution returned False")
                     return []
             except Exception as e:
-                print(f"[ERROR] TensorRT inference error: {e}")
+                print("[ERROR] TensorRT inference error: {}".format(e))
                 print("=" * 60)
                 print("[ERROR] TensorRT execution error detected!")
                 print("[ERROR] This usually means:")
@@ -266,7 +267,7 @@ class TRTDetector:
                 cuda.memcpy_dtoh_async(outputs[0]['host'], outputs[0]['device'], stream)
                 stream.synchronize()
             except Exception as e:
-                print(f"[ERROR] Failed to copy output from device: {e}")
+                print("[ERROR] Failed to copy output from device: {}".format(e))
                 return []
 
         # Postprocess
@@ -274,9 +275,9 @@ class TRTDetector:
         output_data = outputs[0]['host'].reshape(self.output_shape)
         
         # Debug: Print output shape
-        print(f"[DEBUG] Raw output shape: {output_data.shape}")
-        print(f"[DEBUG] Output data dtype: {output_data.dtype}")
-        print(f"[DEBUG] Output data min/max: {output_data.min():.4f} / {output_data.max():.4f}")
+        print("[DEBUG] Raw output shape: {}".format(output_data.shape))
+        print("[DEBUG] Output data dtype: {}".format(output_data.dtype))
+        print("[DEBUG] Output data min/max: {:.4f} / {:.4f}".format(output_data.min(), output_data.max()))
         
         # Validate output - check if all zeros (likely inference failure)
         if np.all(output_data == 0):
@@ -296,7 +297,7 @@ class TRTDetector:
         try:
             detections = self._postprocess(output_data, ratio, dwdh)
         except Exception as e:
-            print(f"[ERROR] Postprocessing failed: {e}")
+            print("[ERROR] Postprocessing failed: {}".format(e))
             return []
         
         return detections
@@ -328,7 +329,7 @@ class TRTDetector:
         This version correctly handles the transposed output and NMS logic.
         """
         # Debug: Print output shape before processing
-        print(f"[DEBUG] _postprocess input shape: {output.shape}")
+        print("[DEBUG] _postprocess input shape: {}".format(output.shape))
         
         # Handle different output shapes from TensorRT
         # Common formats: (1, num_attributes, num_predictions) or (1, num_predictions, num_attributes)
@@ -336,7 +337,7 @@ class TRTDetector:
             # Remove batch dimension and transpose if needed
             # Output is typically (1, num_attributes, num_predictions) or (1, num_predictions, num_attributes)
             squeezed = np.squeeze(output, axis=0)  # Remove batch dimension
-            print(f"[DEBUG] After squeeze: {squeezed.shape}")
+            print("[DEBUG] After squeeze: {}".format(squeezed.shape))
             
             # Determine if we need to transpose
             # If shape is (num_attributes, num_predictions), transpose to (num_predictions, num_attributes)
@@ -344,28 +345,28 @@ class TRTDetector:
             if squeezed.shape[0] < squeezed.shape[1]:
                 # Shape is (num_attributes, num_predictions), need to transpose
                 predictions = squeezed.T
-                print(f"[DEBUG] Transposed to: {predictions.shape}")
+                print("[DEBUG] Transposed to: {}".format(predictions.shape))
             else:
                 # Shape is (num_predictions, num_attributes), use as is
                 predictions = squeezed
-                print(f"[DEBUG] Using as is: {predictions.shape}")
+                print("[DEBUG] Using as is: {}".format(predictions.shape))
         else:
             predictions = output
-            print(f"[DEBUG] Using output directly: {predictions.shape}")
+            print("[DEBUG] Using output directly: {}".format(predictions.shape))
 
         # Determine number of classes from predictions shape
         # Format should be: [x, y, w, h, class_1, class_2, ..., class_n]
         num_attributes = predictions.shape[1]
         num_classes = num_attributes - 4  # Subtract 4 for box coordinates
         
-        print(f"[DEBUG] Number of attributes per prediction: {num_attributes}")
-        print(f"[DEBUG] Inferred number of classes: {num_classes}")
-        print(f"[DEBUG] Actual number of class names: {len(self.class_names)}")
+        print("[DEBUG] Number of attributes per prediction: {}".format(num_attributes))
+        print("[DEBUG] Inferred number of classes: {}".format(num_classes))
+        print("[DEBUG] Actual number of class names: {}".format(len(self.class_names)))
         
         # Validate class count
         if num_classes != len(self.class_names):
-            print(f"[WARNING] Mismatch: Model has {num_classes} classes but class_names.txt has {len(self.class_names)} classes")
-            print(f"[WARNING] Using min({num_classes}, {len(self.class_names)}) = {min(num_classes, len(self.class_names))} classes")
+            print("[WARNING] Mismatch: Model has {} classes but class_names.txt has {} classes".format(num_classes, len(self.class_names)))
+            print("[WARNING] Using min({}, {}) = {} classes".format(num_classes, len(self.class_names), min(num_classes, len(self.class_names))))
             num_classes = min(num_classes, len(self.class_names))
 
         # Filter out predictions with confidence lower than threshold.
@@ -375,14 +376,14 @@ class TRTDetector:
         
         # Get the scores for all classes for all predictions.
         class_probs = predictions[:, 4:4+num_classes]
-        print(f"[DEBUG] Class probabilities shape: {class_probs.shape}")
-        print(f"[DEBUG] Class probabilities min/max: {class_probs.min():.4f} / {class_probs.max():.4f}")
+        print("[DEBUG] Class probabilities shape: {}".format(class_probs.shape))
+        print("[DEBUG] Class probabilities min/max: {:.4f} / {:.4f}".format(class_probs.min(), class_probs.max()))
         
         # Get the max score for each prediction.
         max_scores = np.max(class_probs, axis=1)
-        print(f"[DEBUG] Max scores shape: {max_scores.shape}")
-        print(f"[DEBUG] Max scores min/max: {max_scores.min():.4f} / {max_scores.max():.4f}")
-        print(f"[DEBUG] Predictions above threshold: {np.sum(max_scores > conf_threshold)}")
+        print("[DEBUG] Max scores shape: {}".format(max_scores.shape))
+        print("[DEBUG] Max scores min/max: {:.4f} / {:.4f}".format(max_scores.min(), max_scores.max()))
+        print("[DEBUG] Predictions above threshold: {}".format(np.sum(max_scores > conf_threshold)))
         
         # Filter all predictions with a score lower than the threshold.
         mask = max_scores > conf_threshold
@@ -395,21 +396,21 @@ class TRTDetector:
 
         # Get the class IDs for the filtered predictions.
         class_ids = np.argmax(predictions[:, 4:4+num_classes], axis=1)
-        print(f"[DEBUG] Class IDs shape: {class_ids.shape}")
-        print(f"[DEBUG] Class IDs min/max: {class_ids.min()} / {class_ids.max()}")
-        print(f"[DEBUG] Class IDs sample: {class_ids[:10] if len(class_ids) >= 10 else class_ids}")
+        print("[DEBUG] Class IDs shape: {}".format(class_ids.shape))
+        print("[DEBUG] Class IDs min/max: {} / {}".format(class_ids.min(), class_ids.max()))
+        print("[DEBUG] Class IDs sample: {}".format(class_ids[:10] if len(class_ids) >= 10 else class_ids))
         
         # Validate class IDs are within range
         invalid_mask = (class_ids >= len(self.class_names)) | (class_ids < 0)
         if np.any(invalid_mask):
-            print(f"[ERROR] Invalid class IDs found: {class_ids[invalid_mask]}")
-            print(f"[ERROR] Valid range: 0 to {len(self.class_names) - 1}")
+            print("[ERROR] Invalid class IDs found: {}".format(class_ids[invalid_mask]))
+            print("[ERROR] Valid range: 0 to {}".format(len(self.class_names) - 1))
             # Filter out invalid class IDs
             valid_mask = ~invalid_mask
             predictions = predictions[valid_mask]
             max_scores = max_scores[valid_mask]
             class_ids = class_ids[valid_mask]
-            print(f"[DEBUG] After filtering invalid class IDs: {len(predictions)} predictions")
+            print("[DEBUG] After filtering invalid class IDs: {} predictions".format(len(predictions)))
         
         if predictions.shape[0] == 0:
             return []
@@ -428,15 +429,15 @@ class TRTDetector:
         
         indices = cv2.dnn.NMSBoxes(boxes_for_nms, max_scores.tolist(), conf_threshold, nms_threshold)
         
-        print(f"[DEBUG] NMS indices: {indices}")
-        print(f"[DEBUG] Number of detections after NMS: {len(indices) if len(indices) > 0 else 0}")
+        print("[DEBUG] NMS indices: {}".format(indices))
+        print("[DEBUG] Number of detections after NMS: {}".format(len(indices) if len(indices) > 0 else 0))
         
         detections = []
         if len(indices) > 0:
             for i in indices.flatten():
                 # Validate class_id before accessing class_names
                 if class_ids[i] >= len(self.class_names) or class_ids[i] < 0:
-                    print(f"[ERROR] Invalid class_id {class_ids[i]} at index {i}, skipping")
+                    print("[ERROR] Invalid class_id {} at index {}, skipping".format(class_ids[i], i))
                     continue
                     
                 # Get the final box in (x1, y1, x2, y2) format
@@ -447,7 +448,7 @@ class TRTDetector:
                     'class_name': self.class_names[class_ids[i]]
                 })
         
-        print(f"[DEBUG] Final detections: {len(detections)}")
+        print("[DEBUG] Final detections: {}".format(len(detections)))
         return detections
 
     def rescale_boxes(self, boxes, ratio, dwdh):
