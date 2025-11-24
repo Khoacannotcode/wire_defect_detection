@@ -599,7 +599,7 @@ class DetectionGUI:
         # This ensures only the ROI region is shown in GUI, not the full 16:9 frame
         # ROI: 768x80 (very wide and short rectangle matching training data)
         if self.detector:
-            roi_frame, roi_info = self.detector.crop_to_roi(frame)
+            roi_frame, roi_info = self.detector.crop_to_roi_for_display(frame)
         else:
             # If detector not available, still crop using default ratio and strip height
             h, w = frame.shape[:2]
@@ -628,7 +628,7 @@ class DetectionGUI:
                 # CRITICAL: Crop annotated frame to ROI for display
                 # The annotated_frame contains detections drawn on full frame,
                 # but GUI should only show ROI region (as it was before)
-                annotated_roi, _ = self.detector.crop_to_roi(annotated_frame)
+                annotated_roi, _ = self.detector.crop_to_roi_for_display(annotated_frame)
                 
                 # Update detector statistics (detection counts, FPS history)
                 self.detector.update_stats(detections, processing_time)
