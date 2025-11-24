@@ -15,11 +15,12 @@
 #   2.  Verifies sudo privileges.
 #   3.  Checks for CUDA Toolkit (a critical prerequisite).
 #   4.  Removes any conflicting 'venv/' directory from the project root.
-#   5.  Installs essential system packages (python3-pip).
-#   6.  Installs 'opencv-contrib-python-headless' to provide a complete OpenCV.
-#   7.  Sets up necessary environment variables for CUDA.
-#   8.  Installs other required Python packages (numpy, pycuda).
-#   9.  Performs a final verification to ensure 'cv2.dnn' is available.
+#   5.  Installs essential system packages and BUILD TOOLS (pip, cmake).
+#   6.  Installs Python build dependencies (wheel, scikit-build).
+#   7.  Installs 'opencv-contrib-python-headless' to provide a complete OpenCV.
+#   8.  Sets up necessary environment variables for CUDA.
+#   9.  Installs other required Python packages (numpy, pycuda).
+#   10. Performs a final verification to ensure 'cv2.dnn' is available.
 #
 # Usage:
 #   Navigate to the 'shipping' directory and run:
@@ -90,17 +91,26 @@ else
     echo_info "No existing '$VENV_PATH' directory found. Skipping removal."
 fi
 
-# --- 5. Install System Dependencies ---
-echo_info "Updating package list and installing python3-pip..."
+# --- 5. Install System Dependencies and Build Tools ---
+echo_info "Updating package list and installing python3-pip and cmake..."
 apt-get update
-apt-get install -y python3-pip
+apt-get install -y python3-pip cmake
 if [ $? -ne 0 ]; then
-    echo_error "Failed to install python3-pip. Aborting."
+    echo_error "Failed to install system dependencies. Aborting."
     exit 1
 fi
 echo_info "System dependencies are up to date."
 
-# --- 6. Install OpenCV with Contrib Modules ---
+# --- 6. Install Python Build Dependencies ---
+echo_info "Installing Python build dependencies (wheel, scikit-build)..."
+pip3 install wheel scikit-build
+if [ $? -ne 0 ]; then
+    echo_error "Failed to install Python build dependencies. Aborting."
+    exit 1
+fi
+echo_info "Successfully installed Python build dependencies."
+
+# --- 7. Install OpenCV with Contrib Modules ---
 # The system's OpenCV is unreliable. We will install a complete version from pip.
 # 'headless' is used to avoid installing GUI dependencies on a server.
 echo_info "Installing 'opencv-contrib-python-headless' to ensure 'dnn' module is available..."
@@ -111,7 +121,7 @@ if [ $? -ne 0 ]; then
 fi
 echo_info "Successfully installed opencv-contrib-python-headless."
 
-# --- 7. Set CUDA Environment Variables ---
+# --- 8. Set CUDA Environment Variables ---
 echo_info "Exporting CUDA environment variables for the current session..."
 export CUDA_HOME=$CUDA_PATH
 export PATH=$CUDA_PATH/bin:$PATH
@@ -121,7 +131,7 @@ echo_info "PATH updated."
 echo_info "LD_LIBRARY_PATH updated."
 
 
-# --- 8. Install Other Required Python Packages ---
+# --- 9. Install Other Required Python Packages ---
 echo_info "Installing other required Python packages (numpy, pycuda)..."
 pip3 install numpy
 if [ $? -ne 0 ]; then
@@ -138,7 +148,7 @@ fi
 echo_info "Successfully installed numpy and pycuda."
 
 
-# --- 9. Final Verification ---
+# --- 10. Final Verification ---
 echo_info "Performing final verification to ensure 'cv2.dnn' module is now available..."
 OPENCV_CHECK_RESULT=$(python3 -c "import cv2; print(hasattr(cv2, 'dnn'))" 2>/dev/null)
 
@@ -149,7 +159,7 @@ if [ "$OPENCV_CHECK_RESULT" != "True" ]; then
 fi
 echo_info "Final verification successful. 'cv2.dnn' module is available."
 
-# --- 10. Make Script Executable and Final Steps ---
+# --- 11. Make Script Executable and Final Steps ---
 chmod +x "$0"
 echo_info "Environment setup script completed successfully."
 echo_info "A detailed log has been saved to: $LOG_FILE"
