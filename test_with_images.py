@@ -28,7 +28,7 @@ def load_class_names(file_path):
         with open(file_path, "r") as f:
             return [line.strip() for line in f.readlines() if line.strip()]
     except FileNotFoundError:
-        print(f"[ERROR] '{file_path}' not found. Cannot determine class names for visualization.")
+        print("[ERROR] '{}' not found. Cannot determine class names for visualization.".format(file_path))
         return []
 
 CLASS_NAMES = load_class_names(CLASS_NAMES_PATH)
@@ -44,10 +44,10 @@ def main():
 
     # --- Auto-convert to TensorRT engine if it doesn't exist ---
     if not ENGINE_PATH.exists():
-        print(f"[INFO] TensorRT engine not found at '{ENGINE_PATH}'.")
+        print("[INFO] TensorRT engine not found at '{}'.".format(ENGINE_PATH))
         print("[INFO] Attempting to build engine from ONNX model...")
         if not ONNX_PATH.exists():
-            print(f"[ERROR] ONNX model not found at '{ONNX_PATH}'. Cannot build engine.")
+            print("[ERROR] ONNX model not found at '{}'. Cannot build engine.".format(ONNX_PATH))
             return
         
         if build_engine(ONNX_PATH, ENGINE_PATH):
@@ -63,16 +63,16 @@ def main():
     # 2. Find test images
     image_files = sorted(list(TEST_IMAGES_DIR.glob("*.jpg")))
     if not image_files:
-        print(f"❌ ERROR: No test images found in {TEST_IMAGES_DIR}")
+        print("❌ ERROR: No test images found in {}".format(TEST_IMAGES_DIR))
         return
-    print(f"[INFO] Found {len(image_files)} test images.")
+    print("[INFO] Found {} test images.".format(len(image_files)))
 
     # 3. Process each image
     total_time = 0
     total_detections = 0
 
     for image_path in image_files:
-        print(f"\n--- Processing: {image_path.name} ---")
+        print("\n--- Processing: {} ---".format(image_path.name))
         frame = cv2.imread(str(image_path))
         if frame is None:
             print("  [WARN] Could not read image.")
@@ -86,13 +86,13 @@ def main():
         total_time += inference_time
         total_detections += len(detections)
 
-        print(f"  Inference time: {inference_time:.2f} ms")
-        print(f"  Found {len(detections)} detections.")
+        print("  Inference time: {:.2f} ms".format(inference_time))
+        print("  Found {} detections.".format(len(detections)))
 
         # Draw detections on the frame
         for det in detections:
             box = det['box']
-            label = f"{det['class_name']}: {det['confidence']:.2f}"
+            label = "{}: {:.2f}".format(det['class_name'], det['confidence'])
             color = CLASS_COLORS.get(det['class_name'], DEFAULT_COLOR)
             cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), color, 2)
             cv2.putText(frame, label, (box[0], box[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
@@ -100,7 +100,7 @@ def main():
         # Save the output image
         output_path = OUTPUT_DIR / image_path.name
         cv2.imwrite(str(output_path), frame)
-        print(f"  Saved result to: {output_path}")
+        print("  Saved result to: {}".format(output_path))
 
     # 4. Print summary
     if not image_files:
@@ -112,10 +112,10 @@ def main():
     print("\n" + "=" * 60)
     print("[SUMMARY] Test Complete")
     print("=" * 60)
-    print(f"Images tested: {len(image_files)}")
-    print(f"Total detections: {total_detections}")
-    print(f"Average inference time: {avg_time:.2f} ms")
-    print(f"Average FPS: {avg_fps:.2f}")
+    print("Images tested: {}".format(len(image_files)))
+    print("Total detections: {}".format(total_detections))
+    print("Average inference time: {:.2f} ms".format(avg_time))
+    print("Average FPS: {:.2f}".format(avg_fps))
 
 if __name__ == "__main__":
     main()
