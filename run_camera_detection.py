@@ -65,9 +65,10 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
     
     print("[DEBUG] Camera capture settings: source={}, width={}, height={}, fps={}, use_gstreamer={}".format(source_int, width, height, fps, use_gstreamer))
     
-    # CRITICAL: Check if camera is available before trying to open
+    # CRITICAL: Check if camera is available and try to free it if in use
     # "Failed to create CaptureSession" usually means camera is in use
     import subprocess
+    import time
     try:
         # Check if any process is using video devices (Python 3.5 compatible)
         result = subprocess.Popen(['lsof', '/dev/video0'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
@@ -75,9 +76,20 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
         if result.returncode == 0 and stdout:
             print("[WARN] Camera /dev/video0 appears to be in use by another process:")
             print(stdout)
-            print("[INFO] You may need to kill the process or wait for it to finish")
+            print("[INFO] Attempting to free camera resources...")
+            # Try to kill common camera processes (but be careful not to kill our own process)
+            try:
+                # Kill nvarguscamerasrc processes (GStreamer camera source)
+                subprocess.Popen(['pkill', '-f', 'nvarguscamerasrc'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate(timeout=1)
+                # Kill gst-launch processes
+                subprocess.Popen(['pkill', '-f', 'gst-launch'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate(timeout=1)
+                time.sleep(1.0)  # Wait for processes to terminate
+                print("[INFO] Attempted to free camera, retrying...")
+            except:
+                print("[WARN] Could not free camera resources automatically")
+                print("[INFO] You may need to manually kill the process or wait for it to finish")
     except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
-        # lsof not available or timeout - continue anyway
+        # lsof/pkill not available or timeout - continue anyway
         pass
     
     # Try GStreamer first (proven to work on Jetson)

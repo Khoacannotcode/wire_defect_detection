@@ -441,6 +441,46 @@ class DetectionGUI:
         
         print("[DEBUG] Camera config: source={}, width={}, height={}, fps={}, use_gstreamer={}".format(source, width, height, fps, use_gstreamer))
         
+        # CRITICAL: Release any existing camera capture first
+        # This prevents "Failed to create CaptureSession" errors
+        if self.capture is not None:
+            print("[INFO] Releasing existing camera capture...")
+            try:
+                self.is_capturing = False  # Stop capture loop first
+                if self.capture_thread and self.capture_thread.is_alive():
+                    # Wait for capture thread to finish (with timeout)
+                    self.capture_thread.join(timeout=1.0)
+                self.capture.release()
+                import time
+                time.sleep(0.5)  # Wait for release to complete
+                print("[INFO] Camera released successfully")
+            except Exception as e:
+                print("[WARN] Error releasing camera: {}".format(e))
+            finally:
+                self.capture = None
+        
+        # CRITICAL: Kill any processes that might be holding the camera
+        # This helps when previous runs didn't clean up properly
+        import subprocess
+        try:
+            # Check for processes using camera
+            result = subprocess.Popen(['lsof', '/dev/video0'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+            stdout, stderr = result.communicate(timeout=2)
+            if result.returncode == 0 and stdout:
+                print("[WARN] Camera /dev/video0 is in use. Attempting to free it...")
+                # Try to kill common camera processes (but not our own Python process)
+                try:
+                    subprocess.Popen(['pkill', '-f', 'nvarguscamerasrc'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate(timeout=1)
+                    subprocess.Popen(['pkill', '-f', 'gst-launch'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate(timeout=1)
+                    import time
+                    time.sleep(1.0)  # Wait for processes to terminate
+                    print("[INFO] Attempted to free camera resources")
+                except:
+                    pass
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+            # lsof/pkill not available or timeout - continue anyway
+            pass
+        
         try:
             self.capture = open_capture(source, width, height, fps, use_gstreamer)
             if not self.capture or not self.capture.isOpened():
@@ -509,22 +549,37 @@ class DetectionGUI:
         Camera capture loop running in separate thread.
         CRITICAL: Only reads frames here. Detection runs in main thread to avoid CUDA context issues.
         """
+        import time
         while self.is_capturing:
             if self.capture is None:
                 break
             
-            ret, frame = self.capture.read()
-            if not ret or frame is None:
-                print("[WARN] Failed to read frame")
+            try:
+                ret, frame = self.capture.read()
+                if not ret or frame is None:
+                    print("[WARN] Failed to read frame")
+                    time.sleep(0.1)
+                    continue
+                
+                # Store raw frame for main thread to process
+                # Main thread will run detection (single-threaded TensorRT inference)
+                self.current_frame_raw = frame
+                
+                # Small delay to prevent overwhelming main thread
+                time.sleep(0.01)  # ~100 FPS max capture rate
+            except Exception as e:
+                print("[ERROR] Error in capture loop: {}".format(e))
                 time.sleep(0.1)
                 continue
-            
-            # Store raw frame for main thread to process
-            # Main thread will run detection (single-threaded TensorRT inference)
-            self.current_frame_raw = frame
-            
-            # Small delay to prevent overwhelming main thread
-            time.sleep(0.01)  # ~100 FPS max capture rate
+        
+        # Cleanup when loop exits
+        print("[INFO] Capture loop exiting, releasing camera...")
+        if self.capture is not None:
+            try:
+                self.capture.release()
+            except:
+                pass
+            self.capture = None
     
     def process_frame(self):
         """
@@ -851,13 +906,28 @@ class DetectionGUI:
     
     def on_closing(self):
         """Handle window close event"""
+        print("[INFO] Closing application, cleaning up resources...")
+        
+        # Stop capture loop first
         self.is_capturing = False
         
-        if self.capture:
+        # Wait for capture thread to finish (with timeout)
+        if self.capture_thread and self.capture_thread.is_alive():
+            print("[INFO] Waiting for capture thread to finish...")
+            self.capture_thread.join(timeout=2.0)
+        
+        # Release camera with proper cleanup
+        if self.capture is not None:
+            print("[INFO] Releasing camera...")
             try:
                 self.capture.release()
-            except:
-                pass
+                import time
+                time.sleep(0.3)  # Give camera time to release
+                print("[INFO] Camera released")
+            except Exception as e:
+                print("[WARN] Error releasing camera: {}".format(e))
+            finally:
+                self.capture = None
         
         # Stop session if active
         if self.defect_logger.session_active:
@@ -868,6 +938,7 @@ class DetectionGUI:
         self.save_thresholds()
         self.save_config()
         
+        print("[INFO] Cleanup complete, closing window...")
         self.root.destroy()
     
     def update_log_display(self):
