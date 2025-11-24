@@ -65,6 +65,20 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
     
     print(f"[DEBUG] Camera capture settings: source={source_int}, width={width}, height={height}, fps={fps}, use_gstreamer={use_gstreamer}")
     
+    # CRITICAL: Check if camera is available before trying to open
+    # "Failed to create CaptureSession" usually means camera is in use
+    import subprocess
+    try:
+        # Check if any process is using video devices
+        result = subprocess.run(['lsof', '/dev/video0'], capture_output=True, text=True, timeout=2)
+        if result.returncode == 0 and result.stdout:
+            print("[WARN] Camera /dev/video0 appears to be in use by another process:")
+            print(result.stdout)
+            print("[INFO] You may need to kill the process or wait for it to finish")
+    except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
+        # lsof not available or timeout - continue anyway
+        pass
+    
     # Try GStreamer first (proven to work on Jetson)
     if use_gstreamer:
         print("[INFO] Attempting to open camera with GStreamer pipeline (proven method from simple_recorder.py)...")
@@ -125,8 +139,24 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
             
             print(f"[DEBUG] GStreamer pipeline: {pipeline}")
             print("[DEBUG] Creating VideoCapture with CAP_GSTREAMER...")
+            
+            # CRITICAL: Add small delay before opening camera
+            # Sometimes camera needs a moment to be ready after previous use
+            import time
+            time.sleep(0.5)
+            
             cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
             print(f"[DEBUG] VideoCapture.isOpened() = {cap.isOpened()}")
+            
+            # CRITICAL: If "Failed to create CaptureSession", wait a bit and retry once
+            if not cap.isOpened():
+                print("[WARN] First attempt failed, waiting 1 second and retrying...")
+                time.sleep(1.0)
+                if cap:
+                    cap.release()
+                cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+                print(f"[DEBUG] Retry - VideoCapture.isOpened() = {cap.isOpened()}")
+            
             if cap.isOpened():
                 # Test read to verify camera actually works (with timeout)
                 import time
