@@ -485,20 +485,29 @@ class DetectionGUI:
                 return
             
             self.is_capturing = True
+            self.current_frame_raw = None  # Initialize frame buffer
+            
+            # Start camera capture thread (only reads frames, no detection)
             self.capture_thread = threading.Thread(target=self.capture_loop, daemon=True)
             self.capture_thread.start()
+            
+            # Start frame processing in MAIN THREAD (detection runs here)
+            self.process_frame()
             
             # Enable session buttons
             self.start_btn.config(state=tk.NORMAL)
             
-            print("[INFO] Camera capture started successfully")
+            print("[INFO] Camera capture started successfully (detection runs in main thread)")
         except Exception as e:
             error_msg = f"Failed to start camera: {e}\n\nCheck camera connection and try again."
             messagebox.showerror("Camera Error", error_msg)
             print(f"[ERROR] Camera start failed: {e}")
     
     def capture_loop(self):
-        """Camera capture loop running in separate thread"""
+        """
+        Camera capture loop running in separate thread.
+        CRITICAL: Only reads frames here. Detection runs in main thread to avoid CUDA context issues.
+        """
         while self.is_capturing:
             if self.capture is None:
                 break
@@ -509,59 +518,79 @@ class DetectionGUI:
                 time.sleep(0.1)
                 continue
             
-            # Crop to ROI for display
-            if self.detector:
-                roi_frame, roi_info = self.detector.crop_to_roi(frame)
-            else:
-                roi_frame = frame
-                roi_info = None
+            # Store raw frame for main thread to process
+            # Main thread will run detection (single-threaded TensorRT inference)
+            self.current_frame_raw = frame
             
-            # Run detection if detector is available
-            if self.detector:
-                try:
-                    annotated_frame, detections, processing_time = self.detector.detect_frame(frame)
-                    # Crop annotated frame to ROI for display
-                    annotated_roi, _ = self.detector.crop_to_roi(annotated_frame)
-                    
-                    # Update detector statistics (detection counts, FPS history)
-                    self.detector.update_stats(detections, processing_time)
-                    
-                    # Update FPS
-                    self.frame_count += 1
-                    current_time = time.time()
-                    if current_time - self.last_fps_update >= 1.0:
-                        self.fps = self.frame_count / (current_time - self.last_fps_update)
-                        self.frame_count = 0
-                        self.last_fps_update = current_time
-                    
-                    # Log defects if session is active
-                    if self.defect_logger.session_active:
-                        self.defect_logger.log_defects(self.frame_number, detections)
-                    
-                    # Increment frame number
-                    self.frame_number += 1
-                    
-                    # Store for GUI update
-                    self.current_frame = annotated_roi
-                    self.current_detections = detections
-                except Exception as e:
-                    print(f"[ERROR] Detection failed: {e}")
-                    self.current_frame = roi_frame
-                    self.current_detections = []
-            else:
+            # Small delay to prevent overwhelming main thread
+            time.sleep(0.01)  # ~100 FPS max capture rate
+    
+    def process_frame(self):
+        """
+        Process frame and run detection in MAIN THREAD.
+        This ensures TensorRT inference runs in the same thread as CUDA context initialization.
+        Called periodically via Tkinter's after() callback.
+        """
+        if not self.is_capturing or not hasattr(self, 'current_frame_raw') or self.current_frame_raw is None:
+            # Schedule next check
+            self.root.after(33, self.process_frame)  # ~30 FPS
+            return
+        
+        frame = self.current_frame_raw
+        self.current_frame_raw = None  # Clear to prevent reprocessing
+        
+        # Crop to ROI for display
+        if self.detector:
+            roi_frame, roi_info = self.detector.crop_to_roi(frame)
+        else:
+            roi_frame = frame
+            roi_info = None
+        
+        # Run detection in MAIN THREAD (single-threaded TensorRT inference)
+        if self.detector:
+            try:
+                annotated_frame, detections, processing_time = self.detector.detect_frame(frame)
+                # Crop annotated frame to ROI for display
+                annotated_roi, _ = self.detector.crop_to_roi(annotated_frame)
+                
+                # Update detector statistics (detection counts, FPS history)
+                self.detector.update_stats(detections, processing_time)
+                
+                # Update FPS
+                self.frame_count += 1
+                current_time = time.time()
+                if current_time - self.last_fps_update >= 1.0:
+                    self.fps = self.frame_count / (current_time - self.last_fps_update)
+                    self.frame_count = 0
+                    self.last_fps_update = current_time
+                
+                # Log defects if session is active
+                if self.defect_logger.session_active:
+                    self.defect_logger.log_defects(self.frame_number, detections)
+                
+                # Increment frame number
+                self.frame_number += 1
+                
+                # Store for GUI update
+                self.current_frame = annotated_roi
+                self.current_detections = detections
+            except Exception as e:
+                print(f"[ERROR] Detection failed: {e}")
+                import traceback
+                traceback.print_exc()
                 self.current_frame = roi_frame
                 self.current_detections = []
-                # Still increment frame number
-                self.frame_number += 1
-            
-            # Update GUI from main thread (throttle to prevent queue buildup)
-            # Only schedule if not too many pending updates
-            if self.pending_gui_updates < 2:
-                self.pending_gui_updates += 1
-                self.root.after(0, lambda: self._safe_update_display())
-            
-            # Minimal sleep to prevent CPU spinning (let system handle scheduling)
-            time.sleep(0.01)  # Minimal sleep, system will handle scheduling
+        else:
+            self.current_frame = roi_frame
+            self.current_detections = []
+            # Still increment frame number
+            self.frame_number += 1
+        
+        # Update GUI (already in main thread)
+        self.update_display()
+        
+        # Schedule next frame processing
+        self.root.after(33, self.process_frame)  # ~30 FPS
     
     def _safe_update_display(self):
         """Wrapper for update_display with exception handling and pending counter"""
