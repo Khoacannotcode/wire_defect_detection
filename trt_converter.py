@@ -4,15 +4,23 @@ Task 18, Phase 2: TensorRT Conversion Script
 - Converts a given ONNX model to a TensorRT engine.
 - Designed to be run directly on the target device (e.g., Jetson Nano).
 - Optimizes the engine for FP16 precision to maximize performance.
+- Uses relative paths to be independent of the root directory structure.
 """
 
 import tensorrt as trt
 from pathlib import Path
 
-# Define project directories
-ROOT_DIR = Path(__file__).resolve().parent.parent
-ONNX_MODEL_PATH = ROOT_DIR / "shipping" / "models" / "best_cropped.onnx"
-ENGINE_PATH = ROOT_DIR / "shipping" / "models" / "best_cropped.engine"
+# --- Use relative paths based on the script's location ---
+# Assumes the following structure on Jetson:
+# /some_path/
+# ├── trt_converter.py  (this script)
+# └── models/
+#     ├── best_cropped.onnx
+#     └── best_cropped.engine (will be created)
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+ONNX_MODEL_PATH = SCRIPT_DIR / "models" / "best_cropped.onnx"
+ENGINE_PATH = SCRIPT_DIR / "models" / "best_cropped.engine"
 
 # Logger for TensorRT warnings, errors, and info
 TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
