@@ -75,8 +75,6 @@ except ImportError:
 
 # Import visualization standards
 try:
-    # Try to import from learning_based directory
-    sys.path.insert(0, str(Path(__file__).parent.parent / 'learning_based'))
     from visualization_standards import get_class_color
     VISUALIZATION_STANDARDS_AVAILABLE = True
 except ImportError:

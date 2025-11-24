@@ -34,8 +34,6 @@ except ImportError:
 
 # Import visualization standards
 try:
-    # Try to import from learning_based directory
-    sys.path.insert(0, str(Path(__file__).parent.parent / 'learning_based'))
     from visualization_standards import get_class_color
     VISUALIZATION_STANDARDS_AVAILABLE = True
 except ImportError:
@@ -96,16 +94,16 @@ class SimpleWireDetector:
         # Detect input size from model automatically
         input_shape = self.session.get_inputs()[0].shape
         if len(input_shape) >= 3 and input_shape[2] is not None:
-            self.input_size = int(input_shape[2])  # e.g., [1, 3, 640, 640] -> 640
+            self.input_size = int(input_shape[2])  # e.g., [1, 3, 416, 416] -> 416
         else:
-            # Fallback: default to 640 for 6-class model
-            self.input_size = 640
-            print("[WARN] Could not detect input size from model, defaulting to 640")
+            # Fallback: default to 416 for this model
+            self.input_size = 416
+            print("[WARN] Could not detect input size from model, defaulting to 416")
         
         print(f"[INFO] Detected model input size: {self.input_size}x{self.input_size}")
         self.crop_height = 80
         self.crop_width_ratio = 0.6
-        self.conf_threshold = 0.25  # Default threshold (matching ultralytics YOLO default)
+        self.conf_threshold = 0.25  # Restore original threshold
         self.roi_color = (0, 255, 255)
         
         # Load class names dynamically
@@ -544,7 +542,22 @@ class SimpleWireDetector:
         
         # Run inference
         outputs = self.session.run(None, {self.input_name: input_data})
+
+        # --- DIAGNOSTIC PRINT ---
+        print(f"  [DEBUG] Raw output shape: {outputs[0].shape}")
+        print(f"  [DEBUG] Raw output stats: min={np.min(outputs[0])}, max={np.max(outputs[0])}, mean={np.mean(outputs[0])}")
         
+        # --- ADD MORE DIAGNOSTICS ---
+        transposed_output = outputs[0][0].transpose()
+        objectness_scores = transposed_output[:, 4]
+        
+        # Apply sigmoid to objectness scores if they are logits
+        if np.max(objectness_scores) > 1.0 or np.min(objectness_scores) < 0.0:
+            objectness_scores = 1.0 / (1.0 + np.exp(-objectness_scores))
+        
+        print(f"  [DEBUG] Objectness scores (after sigmoid): min={np.min(objectness_scores):.4f}, max={np.max(objectness_scores):.4f}, mean={np.mean(objectness_scores):.4f}")
+        # --- END DIAGNOSTIC ---
+
         # Postprocess with smart logging
         detections, stats = self.postprocess(
             outputs[0], ratio, dwdh, cropped_image.shape,
@@ -587,7 +600,7 @@ def test_images():
     print("[TEST] Wire Defect Detection - Image Testing")
     print("=" * 60)
     
-    # Use the latest model
+    # Use the final, verified model
     model_path = MODELS_DIR / "best_cropped.onnx"
     
     if not model_path.exists():
