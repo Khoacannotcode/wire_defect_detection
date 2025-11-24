@@ -12,14 +12,13 @@ Navigate to the `shipping` directory and run the setup script with `sudo`. This 
 
 ```bash
 cd /path/to/your/project/shipping
-sudo ./setup_environment.sh
+sudo ./setup_prerequisites.sh
 ```
 
 This script will:
-- Remove any old virtual environments to prevent conflicts.
-- Install `python3-pip`.
-- Install required Python libraries like `numpy` and `pycuda` into the system's Python environment.
-- Ensure that the system's hardware-accelerated OpenCV is used.
+- Install `python3-pip` and build tools.
+- Install required Python libraries (`numpy`, `pycuda`, `pillow`) into the system's Python environment.
+- Ensure that the system's hardware-accelerated OpenCV is used (if OpenCV build script is run separately).
 
 After this script completes, your environment is ready. You do not need to run it again unless the dependencies change.
 
@@ -54,5 +53,5 @@ python3 test_with_images.py
 | Problem | Solution |
 |---|---|
 | `python3: command not found` | Your system may be missing Python 3. This is unlikely on JetPack. |
-| `ModuleNotFoundError` | Run the setup script again to ensure all dependencies are installed: `sudo ./setup_environment.sh` |
+| `ModuleNotFoundError` (e.g., `No module named 'PIL'`) | Run the setup script to install missing dependencies: `sudo ./setup_prerequisites.sh`. This will install numpy, pycuda, and pillow required for GUI. |
 | Camera doesn't open | Ensure the camera is connected properly. Check the camera source index in the script if you have multiple cameras. |

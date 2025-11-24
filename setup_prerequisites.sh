@@ -33,9 +33,9 @@ python3 -m pip install --upgrade pip setuptools wheel
 echo "[INFO] Successfully upgraded core Python build tools."
 
 # --- Install Python Dependencies (excluding OpenCV) ---
-echo "[INFO] Installing Python dependencies (numpy, pycuda)..."
-pip3 install numpy pycuda
-echo "[INFO] Successfully installed numpy and pycuda."
+echo "[INFO] Installing Python dependencies (numpy, pycuda, pillow)..."
+pip3 install numpy pycuda pillow
+echo "[INFO] Successfully installed numpy, pycuda, and pillow."
 
 echo "[INFO] Prerequisite setup script completed successfully."
 exit 0
