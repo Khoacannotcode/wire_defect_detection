@@ -110,36 +110,63 @@ class TRTDetector:
 
     def _postprocess(self, output, ratio, dwdh):
         """
-        Post-processes the raw output from the YOLOv8 model.
-        This version adds np.ascontiguousarray to resolve potential memory layout issues.
+        Post-processes with step-by-step logging to debug data transformations.
         """
-        # Squeeze to remove batch dimension
+        print("\n--- POST-PROCESSING DEBUG ---")
+        
+        # Step 1: Initial output from model
+        print(f"1. Initial output shape: {output.shape}")
+        # Expected: (1, 10, 8400)
+
+        # Step 2: Squeeze to remove batch dimension
         output = np.squeeze(output)
-        
-        # Transpose and then immediately make it a contiguous array in memory.
-        output = np.ascontiguousarray(output.T)
+        print(f"2. Shape after squeeze: {output.shape}")
+        # Expected: (10, 8400)
 
-        # --- THÊM DÒNG DEBUG 1 ---
-        print(f"DEBUG: Shape of output array: {output.shape}")
+        # Step 3: Transpose to get predictions per row
+        # Each row will now represent one of the 8400 predictions
+        output = output.T
+        print(f"3. Shape after transpose: {output.shape}")
+        # Expected: (8400, 10)
 
-        conf_threshold = 0.25
-        
+        # Step 4: Extract scores and filter
+        # The last 6 columns are class probabilities
         class_probs = output[:, 4:]
+        # The score for each prediction is the highest probability among its classes
         max_scores = np.max(class_probs, axis=1)
-
+        
+        conf_threshold = 0.25
         mask = max_scores > conf_threshold
-        output = output[mask]
-        max_scores = max_scores[mask]
+        
+        filtered_output = output[mask]
+        filtered_scores = max_scores[mask]
+        
+        print(f"4. Found {output.shape[0]} total predictions.")
+        print(f"   - Found {filtered_output.shape[0]} predictions above conf_threshold {conf_threshold}")
 
-        if output.shape[0] == 0:
+        if filtered_output.shape[0] == 0:
+            print("--- END DEBUG ---")
             return []
 
-        class_ids = np.argmax(output[:, 4:], axis=1)
-
-        # --- THÊM DÒNG DEBUG 2 ---
-        print(f"DEBUG: Max class ID found before NMS: {np.max(class_ids)}")
+        # Step 5: Get class IDs for filtered predictions
+        # This is where the error occurred. Let's inspect the data fed into it.
+        filtered_class_probs = filtered_output[:, 4:]
+        class_ids = np.argmax(filtered_class_probs, axis=1)
         
-        boxes_raw = output[:, :4]
+        print(f"5. Shape of class probabilities array for argmax: {filtered_class_probs.shape}")
+        # Expected: (num_filtered_predictions, 6)
+        print(f"   - Min class ID found: {np.min(class_ids)}, Max class ID found: {np.max(class_ids)}")
+
+        # If max class ID > 5, there is a fundamental logic error.
+        if np.max(class_ids) > (len(self.class_names) - 1):
+            print(f"   - ❌ CRITICAL ERROR: Found a class ID ({np.max(class_ids)}) greater than the max allowed index ({len(self.class_names) - 1}).")
+            print("     This indicates the model's output does not match the expected 6 classes.")
+            print("--- END DEBUG ---")
+            # Return empty to prevent crash, but the root cause is a model mismatch.
+            return []
+
+        # Step 6: Process boxes for NMS
+        boxes_raw = filtered_output[:, :4]
         boxes_rescaled = self.rescale_boxes(boxes_raw, ratio, dwdh)
 
         boxes_for_nms = []
@@ -148,22 +175,28 @@ class TRTDetector:
             width = x2 - x1
             height = y2 - y1
             boxes_for_nms.append([int(x1), int(y1), int(width), int(height)])
+        
+        print(f"6. Prepared {len(boxes_for_nms)} boxes for NMS.")
 
+        # Step 7: Apply NMS
         nms_threshold = 0.5
-        indices = cv2.dnn.NMSBoxes(boxes_for_nms, max_scores.tolist(), conf_threshold, nms_threshold)
+        indices = cv2.dnn.NMSBoxes(boxes_for_nms, filtered_scores.tolist(), conf_threshold, nms_threshold)
+        print(f"7. NMS applied. Found {len(indices)} final detections.")
         
         detections = []
         if len(indices) > 0:
             for i in indices.flatten():
-                x, y, w, h = boxes_for_nms[i]
-                final_box = [x, y, x + w, y + h]
+                final_box = boxes_for_nms[i]
+                final_box[2] += final_box[0] # Convert w,h back to x2,y2 for drawing
+                final_box[3] += final_box[1]
 
                 detections.append({
                     'box': final_box,
-                    'confidence': max_scores[i],
+                    'confidence': filtered_scores[i],
                     'class_name': self.class_names[class_ids[i]]
                 })
         
+        print("--- END DEBUG ---")
         return detections
 
     def rescale_boxes(self, boxes, ratio, dwdh):
