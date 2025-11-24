@@ -109,7 +109,7 @@ class TRTDetector:
         return img, r, (dw, dh)
 
     def _postprocess(self, output, ratio, dwdh):
-        output = np.squeeze(output).T
+        output = np.squeeze(output)
         boxes, scores, class_ids = [], [], []
         
         # Filter based on confidence threshold
