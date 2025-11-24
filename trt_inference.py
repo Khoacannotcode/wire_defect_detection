@@ -51,6 +51,19 @@ class TRTDetector:
         except Exception as e:
             print(f"[ERROR] Failed to allocate CUDA buffers: {e}")
             raise RuntimeError(f"Buffer allocation failed: {e}")
+        
+        # Get model metadata and input shape (needed for preprocessing)
+        self.input_shape = self.engine.get_binding_shape(0)
+        self.batch_size = self.input_shape[0]
+        
+        # Get output binding shape for debugging
+        for i in range(self.engine.num_bindings):
+            if not self.engine.binding_is_input(i):
+                self.output_shape = self.engine.get_binding_shape(i)
+                print(f"[DEBUG] Output binding shape: {self.output_shape}")
+                print(f"[DEBUG] Number of classes loaded: {len(self.class_names)}")
+                print(f"[DEBUG] Class names: {self.class_names}")
+                break
     
     def _get_context(self):
         """
@@ -70,19 +83,6 @@ class TRTDetector:
                     self._thread_contexts[thread_id] = self.engine.create_execution_context()
         
         return self._thread_contexts[thread_id]
-        
-        # Get model metadata and input shape
-        self.input_shape = self.engine.get_binding_shape(0)
-        self.batch_size = self.input_shape[0]
-        
-        # Get output binding shape for debugging
-        for i in range(self.engine.num_bindings):
-            if not self.engine.binding_is_input(i):
-                self.output_shape = self.engine.get_binding_shape(i)
-                print(f"[DEBUG] Output binding shape: {self.output_shape}")
-                print(f"[DEBUG] Number of classes loaded: {len(self.class_names)}")
-                print(f"[DEBUG] Class names: {self.class_names}")
-                break
 
     def _load_class_names(self):
         """Loads class names from a file named class_names.txt in the same directory as the engine."""
