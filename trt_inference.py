@@ -18,13 +18,29 @@ TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
 class TRTDetector:
     def __init__(self, engine_path):
         self.engine_path = Path(engine_path)
+        
+        # Validate CUDA context initialization
+        try:
+            cuda.init()
+            device = cuda.Device(0)
+            ctx = device.make_context()
+            device_name = device.name()
+            print(f"[INFO] CUDA context initialized on device: {device_name}")
+        except Exception as e:
+            print(f"[ERROR] Failed to initialize CUDA context: {e}")
+            raise RuntimeError(f"CUDA initialization failed: {e}. Please check CUDA installation.")
+        
         self.engine = self._load_engine()
         self.context = self.engine.create_execution_context()
         
         # Load class names FIRST, as they are needed for buffer allocation logic
         self.class_names = self._load_class_names()
         
-        self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
+        try:
+            self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
+        except Exception as e:
+            print(f"[ERROR] Failed to allocate CUDA buffers: {e}")
+            raise RuntimeError(f"Buffer allocation failed: {e}")
         
         # Get model metadata and input shape
         self.input_shape = self.engine.get_binding_shape(0)
@@ -73,19 +89,57 @@ class TRTDetector:
         return inputs, outputs, bindings, stream
         
     def detect(self, image):
-        # Preprocess
-        input_image, ratio, dwdh = self._preprocess(image)
+        """
+        Detect objects in image using TensorRT engine.
+        
+        Args:
+            image: Input image (numpy array, BGR format)
+        
+        Returns:
+            List of detection dictionaries with 'box', 'confidence', 'class_name'
+        """
+        # Validate input
+        if image is None or image.size == 0:
+            print("[ERROR] Invalid input image")
+            return []
+        
+        try:
+            # Preprocess
+            input_image, ratio, dwdh = self._preprocess(image)
+        except Exception as e:
+            print(f"[ERROR] Preprocessing failed: {e}")
+            return []
         
         # Copy input data to device
-        np.copyto(self.inputs[0]['host'], input_image.ravel())
-        cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], self.stream)
+        try:
+            np.copyto(self.inputs[0]['host'], input_image.ravel())
+            cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], self.stream)
+        except Exception as e:
+            print(f"[ERROR] Failed to copy input to device: {e}")
+            return []
 
         # Run inference
-        self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
+        try:
+            success = self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
+            if not success:
+                print("[ERROR] TensorRT inference execution returned False")
+                return []
+        except Exception as e:
+            print(f"[ERROR] TensorRT inference error: {e}")
+            print("[ERROR] This may indicate:")
+            print("  - Engine was built on a different device")
+            print("  - CUDA context initialization issue")
+            print("  - Engine corruption")
+            print("[INFO] Try rebuilding the engine on this device: python3 trt_converter.py")
+            return []
 
         # Copy output data from device
-        cuda.memcpy_dtoh_async(self.outputs[0]['host'], self.outputs[0]['device'], self.stream)
-        self.stream.synchronize()
+        try:
+            cuda.memcpy_dtoh_async(self.outputs[0]['host'], self.outputs[0]['device'], self.stream)
+            self.stream.synchronize()
+        except Exception as e:
+            print(f"[ERROR] Failed to copy output from device: {e}")
+            return []
 
         # Postprocess
         # Use the actual output shape from the engine instead of assuming
@@ -96,7 +150,27 @@ class TRTDetector:
         print(f"[DEBUG] Output data dtype: {output_data.dtype}")
         print(f"[DEBUG] Output data min/max: {output_data.min():.4f} / {output_data.max():.4f}")
         
-        detections = self._postprocess(output_data, ratio, dwdh)
+        # Validate output - check if all zeros (likely inference failure)
+        if np.all(output_data == 0):
+            print("[WARNING] Output is all zeros - inference may have failed!")
+            print("[WARNING] This could indicate:")
+            print("  - Engine was built on a different device")
+            print("  - CUDA context initialization issue")
+            print("  - Engine corruption")
+            print("[INFO] Try rebuilding the engine on this device: python3 trt_converter.py")
+            return []
+        
+        # Check if output has reasonable values (not all zeros or NaNs)
+        if np.any(np.isnan(output_data)) or np.any(np.isinf(output_data)):
+            print("[WARNING] Output contains NaN or Inf values - inference may have failed!")
+            return []
+        
+        try:
+            detections = self._postprocess(output_data, ratio, dwdh)
+        except Exception as e:
+            print(f"[ERROR] Postprocessing failed: {e}")
+            return []
+        
         return detections
 
     def _preprocess(self, img):
