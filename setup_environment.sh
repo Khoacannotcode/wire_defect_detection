@@ -15,7 +15,7 @@
 #   2.  Verifies sudo privileges.
 #   3.  Checks for CUDA Toolkit (a critical prerequisite).
 #   4.  Removes any conflicting 'venv/' directory from the project root.
-#   5.  Installs essential system packages (pip, cmake).
+#   5.  Installs essential system packages and ALL BUILD TOOLS (pip, cmake, build-essential, ninja-build, etc.).
 #   6.  UPGRADES core Python build tools (pip, setuptools, wheel).
 #   7.  Installs Python build dependencies (scikit-build).
 #   8.  Installs 'opencv-contrib-python-headless' to provide a complete OpenCV.
@@ -93,9 +93,9 @@ else
 fi
 
 # --- 5. Install System Dependencies and Build Tools ---
-echo_info "Updating package list and installing python3-pip and cmake..."
+echo_info "Updating package list and installing all required build tools..."
 apt-get update
-apt-get install -y python3-pip cmake
+apt-get install -y python3-pip cmake build-essential pkg-config ninja-build
 if [ $? -ne 0 ]; then
     echo_error "Failed to install system dependencies. Aborting."
     exit 1
