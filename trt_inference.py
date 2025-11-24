@@ -29,6 +29,15 @@ class TRTDetector:
         # Get model metadata and input shape
         self.input_shape = self.engine.get_binding_shape(0)
         self.batch_size = self.input_shape[0]
+        
+        # Get output binding shape for debugging
+        for i in range(self.engine.num_bindings):
+            if not self.engine.binding_is_input(i):
+                self.output_shape = self.engine.get_binding_shape(i)
+                print(f"[DEBUG] Output binding shape: {self.output_shape}")
+                print(f"[DEBUG] Number of classes loaded: {len(self.class_names)}")
+                print(f"[DEBUG] Class names: {self.class_names}")
+                break
 
     def _load_class_names(self):
         """Loads class names from a file named class_names.txt in the same directory as the engine."""
@@ -79,10 +88,13 @@ class TRTDetector:
         self.stream.synchronize()
 
         # Postprocess
-        # THIS IS THE CRITICAL FIX: The output shape is calculated dynamically
-        # using the number of classes we loaded from the file.
-        output_shape = (self.batch_size, -1, len(self.class_names) + 4) # 4 for box coords
-        output_data = self.outputs[0]['host'].reshape(output_shape)
+        # Use the actual output shape from the engine instead of assuming
+        output_data = self.outputs[0]['host'].reshape(self.output_shape)
+        
+        # Debug: Print output shape
+        print(f"[DEBUG] Raw output shape: {output_data.shape}")
+        print(f"[DEBUG] Output data dtype: {output_data.dtype}")
+        print(f"[DEBUG] Output data min/max: {output_data.min():.4f} / {output_data.max():.4f}")
         
         detections = self._postprocess(output_data, ratio, dwdh)
         return detections
@@ -113,10 +125,46 @@ class TRTDetector:
         Final, corrected post-processing function based on standard YOLOv8 ONNX examples.
         This version correctly handles the transposed output and NMS logic.
         """
-        # The output from the model is shape (1, 10, 8400).
-        # Squeeze to (10, 8400) and transpose to (8400, 10).
-        # Each row now represents one of the 8400 possible detections.
-        predictions = np.squeeze(output).T
+        # Debug: Print output shape before processing
+        print(f"[DEBUG] _postprocess input shape: {output.shape}")
+        
+        # Handle different output shapes from TensorRT
+        # Common formats: (1, num_attributes, num_predictions) or (1, num_predictions, num_attributes)
+        if len(output.shape) == 3:
+            # Remove batch dimension and transpose if needed
+            # Output is typically (1, num_attributes, num_predictions) or (1, num_predictions, num_attributes)
+            squeezed = np.squeeze(output, axis=0)  # Remove batch dimension
+            print(f"[DEBUG] After squeeze: {squeezed.shape}")
+            
+            # Determine if we need to transpose
+            # If shape is (num_attributes, num_predictions), transpose to (num_predictions, num_attributes)
+            # If shape is (num_predictions, num_attributes), use as is
+            if squeezed.shape[0] < squeezed.shape[1]:
+                # Shape is (num_attributes, num_predictions), need to transpose
+                predictions = squeezed.T
+                print(f"[DEBUG] Transposed to: {predictions.shape}")
+            else:
+                # Shape is (num_predictions, num_attributes), use as is
+                predictions = squeezed
+                print(f"[DEBUG] Using as is: {predictions.shape}")
+        else:
+            predictions = output
+            print(f"[DEBUG] Using output directly: {predictions.shape}")
+
+        # Determine number of classes from predictions shape
+        # Format should be: [x, y, w, h, class_1, class_2, ..., class_n]
+        num_attributes = predictions.shape[1]
+        num_classes = num_attributes - 4  # Subtract 4 for box coordinates
+        
+        print(f"[DEBUG] Number of attributes per prediction: {num_attributes}")
+        print(f"[DEBUG] Inferred number of classes: {num_classes}")
+        print(f"[DEBUG] Actual number of class names: {len(self.class_names)}")
+        
+        # Validate class count
+        if num_classes != len(self.class_names):
+            print(f"[WARNING] Mismatch: Model has {num_classes} classes but class_names.txt has {len(self.class_names)} classes")
+            print(f"[WARNING] Using min({num_classes}, {len(self.class_names)}) = {min(num_classes, len(self.class_names))} classes")
+            num_classes = min(num_classes, len(self.class_names))
 
         # Filter out predictions with confidence lower than threshold.
         # In this format, the confidence score of a prediction is the highest score
@@ -124,18 +172,45 @@ class TRTDetector:
         conf_threshold = 0.25
         
         # Get the scores for all classes for all predictions.
-        class_probs = predictions[:, 4:]
+        class_probs = predictions[:, 4:4+num_classes]
+        print(f"[DEBUG] Class probabilities shape: {class_probs.shape}")
+        print(f"[DEBUG] Class probabilities min/max: {class_probs.min():.4f} / {class_probs.max():.4f}")
+        
         # Get the max score for each prediction.
         max_scores = np.max(class_probs, axis=1)
+        print(f"[DEBUG] Max scores shape: {max_scores.shape}")
+        print(f"[DEBUG] Max scores min/max: {max_scores.min():.4f} / {max_scores.max():.4f}")
+        print(f"[DEBUG] Predictions above threshold: {np.sum(max_scores > conf_threshold)}")
+        
         # Filter all predictions with a score lower than the threshold.
-        predictions = predictions[max_scores > conf_threshold]
-        max_scores = max_scores[max_scores > conf_threshold]
+        mask = max_scores > conf_threshold
+        predictions = predictions[mask]
+        max_scores = max_scores[mask]
 
         if predictions.shape[0] == 0:
+            print("[DEBUG] No predictions above confidence threshold")
             return []
 
         # Get the class IDs for the filtered predictions.
-        class_ids = np.argmax(predictions[:, 4:], axis=1)
+        class_ids = np.argmax(predictions[:, 4:4+num_classes], axis=1)
+        print(f"[DEBUG] Class IDs shape: {class_ids.shape}")
+        print(f"[DEBUG] Class IDs min/max: {class_ids.min()} / {class_ids.max()}")
+        print(f"[DEBUG] Class IDs sample: {class_ids[:10] if len(class_ids) >= 10 else class_ids}")
+        
+        # Validate class IDs are within range
+        invalid_mask = (class_ids >= len(self.class_names)) | (class_ids < 0)
+        if np.any(invalid_mask):
+            print(f"[ERROR] Invalid class IDs found: {class_ids[invalid_mask]}")
+            print(f"[ERROR] Valid range: 0 to {len(self.class_names) - 1}")
+            # Filter out invalid class IDs
+            valid_mask = ~invalid_mask
+            predictions = predictions[valid_mask]
+            max_scores = max_scores[valid_mask]
+            class_ids = class_ids[valid_mask]
+            print(f"[DEBUG] After filtering invalid class IDs: {len(predictions)} predictions")
+        
+        if predictions.shape[0] == 0:
+            return []
         
         # Rescale the box coordinates to the original image space.
         boxes_raw = predictions[:, :4]
@@ -151,17 +226,26 @@ class TRTDetector:
         
         indices = cv2.dnn.NMSBoxes(boxes_for_nms, max_scores.tolist(), conf_threshold, nms_threshold)
         
+        print(f"[DEBUG] NMS indices: {indices}")
+        print(f"[DEBUG] Number of detections after NMS: {len(indices) if len(indices) > 0 else 0}")
+        
         detections = []
         if len(indices) > 0:
             for i in indices.flatten():
+                # Validate class_id before accessing class_names
+                if class_ids[i] >= len(self.class_names) or class_ids[i] < 0:
+                    print(f"[ERROR] Invalid class_id {class_ids[i]} at index {i}, skipping")
+                    continue
+                    
                 # Get the final box in (x1, y1, x2, y2) format
                 x1, y1, x2, y2 = boxes_rescaled[i]
                 detections.append({
                     'box': [int(x1), int(y1), int(x2), int(y2)],
-                    'confidence': max_scores[i],
+                    'confidence': float(max_scores[i]),
                     'class_name': self.class_names[class_ids[i]]
                 })
         
+        print(f"[DEBUG] Final detections: {len(detections)}")
         return detections
 
     def rescale_boxes(self, boxes, ratio, dwdh):
