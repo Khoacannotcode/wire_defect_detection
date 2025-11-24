@@ -15,13 +15,15 @@
 #   2.  Verifies sudo privileges.
 #   3.  Checks for CUDA Toolkit (a critical prerequisite).
 #   4.  Removes any conflicting 'venv/' directory from the project root.
-#   5.  Installs essential system packages and ALL BUILD TOOLS (pip, cmake, build-essential, ninja-build, etc.).
-#   6.  UPGRADES core Python build tools (pip, setuptools, wheel).
-#   7.  Installs Python build dependencies (scikit-build).
-#   8.  Installs 'opencv-contrib-python-headless' to provide a complete OpenCV.
-#   9.  Sets up necessary environment variables for CUDA.
-#   10. Installs other required Python packages (numpy, pycuda).
-#   11. Performs a final verification to ensure 'cv2.dnn' is available.
+#   5.  Installs essential system packages and ALL BUILD TOOLS.
+#   6.  UPGRADES core Python build tools.
+#   7.  Installs Python build dependencies.
+#   8.  MANAGES SWAP SPACE for compiling OpenCV.
+#   9.  Installs 'opencv-contrib-python-headless'.
+#   10. RESTORES original swap configuration.
+#   11. Sets up necessary environment variables for CUDA.
+#   12. Installs other required Python packages.
+#   13. Performs a final verification to ensure 'cv2.dnn' is available.
 #
 # Usage:
 #   Navigate to the 'shipping' directory and run:
@@ -120,18 +122,47 @@ if [ $? -ne 0 ]; then
 fi
 echo_info "Successfully installed Python build dependencies."
 
-# --- 8. Install OpenCV with Contrib Modules ---
+# --- 8. Increase Swap Space for OpenCV Compilation ---
+echo_info "OpenCV compilation requires significant memory. Temporarily increasing swap space..."
+# Disable ZRAM to prevent conflicts if it exists
+systemctl disable nvzramconfig &>/dev/null || true
+# Turn off all existing swap
+swapoff --all
+# Create a new 6GB swap file
+fallocate -l 6G /mnt/6G.swap
+chmod 600 /mnt/6G.swap
+mkswap /mnt/6G.swap
+swapon /mnt/6G.swap
+echo_info "Current swap status:"
+swapon --show
+free -h
+
+# --- 9. Install OpenCV with Contrib Modules ---
 # The system's OpenCV is unreliable. We will install a complete version from pip.
 # 'headless' is used to avoid installing GUI dependencies on a server.
 echo_info "Installing 'opencv-contrib-python-headless' to ensure 'dnn' module is available..."
 pip3 install opencv-contrib-python-headless
-if [ $? -ne 0 ]; then
+INSTALL_SUCCESS=$? # Save the exit code of the installation
+
+# --- 10. Restore Original Swap Configuration ---
+echo_info "Restoring original swap configuration..."
+# Turn off and remove the temporary swap file
+swapoff /mnt/6G.swap
+rm /mnt/6G.swap
+# Re-enable ZRAM if it was originally present
+systemctl enable nvzramconfig &>/dev/null || true
+systemctl start nvzramconfig &>/dev/null || true
+echo_info "Swap configuration restored. Current status:"
+free -h
+
+# Check if the installation failed and abort if it did
+if [ $INSTALL_SUCCESS -ne 0 ]; then
     echo_error "Failed to install opencv-contrib-python-headless. Aborting."
     exit 1
 fi
 echo_info "Successfully installed opencv-contrib-python-headless."
 
-# --- 9. Set CUDA Environment Variables ---
+# --- 11. Set CUDA Environment Variables ---
 echo_info "Exporting CUDA environment variables for the current session..."
 export CUDA_HOME=$CUDA_PATH
 export PATH=$CUDA_PATH/bin:$PATH
@@ -141,7 +172,7 @@ echo_info "PATH updated."
 echo_info "LD_LIBRARY_PATH updated."
 
 
-# --- 10. Install Other Required Python Packages ---
+# --- 12. Install Other Required Python Packages ---
 echo_info "Installing other required Python packages (numpy, pycuda)..."
 pip3 install numpy
 if [ $? -ne 0 ]; then
@@ -158,7 +189,7 @@ fi
 echo_info "Successfully installed numpy and pycuda."
 
 
-# --- 11. Final Verification ---
+# --- 13. Final Verification ---
 echo_info "Performing final verification to ensure 'cv2.dnn' module is now available..."
 OPENCV_CHECK_RESULT=$(python3 -c "import cv2; print(hasattr(cv2, 'dnn'))" 2>/dev/null)
 
@@ -169,7 +200,7 @@ if [ "$OPENCV_CHECK_RESULT" != "True" ]; then
 fi
 echo_info "Final verification successful. 'cv2.dnn' module is available."
 
-# --- 12. Make Script Executable and Final Steps ---
+# --- 14. Make Script Executable and Final Steps ---
 chmod +x "$0"
 echo_info "Environment setup script completed successfully."
 echo_info "A detailed log has been saved to: $LOG_FILE"
