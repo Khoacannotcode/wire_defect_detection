@@ -1,34 +1,38 @@
 #!/usr-bin/env python3
 """
-Task 18, Phase 4: Verify TensorRT Performance with Image Testing
+Task 18, Phase 4: Verify TensorRT Performance with Image Testing (Re-created)
 - Uses the new TRTDetector for inference.
 - Measures performance and accuracy on a set of test images.
+- Loads class names dynamically to ensure synchronization.
 """
 import cv2
 from pathlib import Path
 import time
 import numpy as np
-from trt_inference import TRTDetector  # <-- Import the new TensorRT detector
+from trt_inference import TRTDetector 
+from trt_converter import build_engine # Import the builder
 
-# --- Configuration ---
+# --- Configuration using relative paths ---
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODELS_DIR = SCRIPT_DIR / "models"
+ONNX_PATH = MODELS_DIR / "best_cropped.onnx"
 ENGINE_PATH = MODELS_DIR / "best_cropped.engine"
 TEST_IMAGES_DIR = SCRIPT_DIR / "test_images"
-OUTPUT_DIR = SCRIPT_DIR / "test_images_output_trt"
+OUTPUT_DIR = SCRIPT_DIR / "test_results"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# --- MODIFIED: Load class names and generate colors dynamically ---
+# --- Load class names and generate colors dynamically ---
 CLASS_NAMES_PATH = MODELS_DIR / "class_names.txt"
 def load_class_names(file_path):
-    if not file_path.exists():
-        print(f"[WARN] Class names file not found at {file_path}, colors will not be specific.")
+    try:
+        with open(file_path, "r") as f:
+            return [line.strip() for line in f.readlines() if line.strip()]
+    except FileNotFoundError:
+        print(f"[ERROR] '{file_path}' not found. Cannot determine class names for visualization.")
         return []
-    with open(file_path, "r") as f:
-        return [line.strip() for line in f.readlines() if line.strip()]
 
 CLASS_NAMES = load_class_names(CLASS_NAMES_PATH)
-# Generate a consistent color for each class name
+# Generate a consistent, random color for each class name
 np.random.seed(42) 
 CLASS_COLORS = {name: np.random.randint(0, 255, size=3).tolist() for name in CLASS_NAMES}
 DEFAULT_COLOR = (255, 0, 0)
@@ -38,12 +42,21 @@ def main():
     print("[TEST] Wire Defect Detection - TensorRT Image Testing")
     print("=" * 60)
 
-    # 1. Initialize the TensorRT detector
+    # --- Auto-convert to TensorRT engine if it doesn't exist ---
     if not ENGINE_PATH.exists():
-        print(f"❌ ERROR: TensorRT engine not found at {ENGINE_PATH}")
-        print("Please run trt_converter.py first.")
-        return
+        print(f"[INFO] TensorRT engine not found at '{ENGINE_PATH}'.")
+        print("[INFO] Attempting to build engine from ONNX model...")
+        if not ONNX_PATH.exists():
+            print(f"[ERROR] ONNX model not found at '{ONNX_PATH}'. Cannot build engine.")
+            return
         
+        if build_engine(ONNX_PATH, ENGINE_PATH):
+            print("\n🎉 Successfully built TensorRT engine!")
+        else:
+            print("\n🔥 Failed to build TensorRT engine. Aborting.")
+            return
+
+    # 1. Initialize the TensorRT detector
     detector = TRTDetector(str(ENGINE_PATH))
     print("[OK] TensorRT Detector initialized successfully.")
 
@@ -90,6 +103,10 @@ def main():
         print(f"  Saved result to: {output_path}")
 
     # 4. Print summary
+    if not image_files:
+        print("\nNo images were processed.")
+        return
+        
     avg_time = total_time / len(image_files)
     avg_fps = 1000 / avg_time if avg_time > 0 else 0
     print("\n" + "=" * 60)

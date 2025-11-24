@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Task 18, Phase 3: TensorRT Inference Module
+Task 18, Phase 3: TensorRT Inference Module (Re-created)
 - Contains the core logic for running inference with a TensorRT engine.
 - Encapsulates model loading, pre-processing, inference, and post-processing.
+- Loads class names dynamically from a file to ensure synchronization with the model.
 """
 
 import tensorrt as trt
@@ -19,28 +20,32 @@ class TRTDetector:
         self.engine_path = Path(engine_path)
         self.engine = self._load_engine()
         self.context = self.engine.create_execution_context()
+        
+        # Load class names FIRST, as they are needed for buffer allocation logic
+        self.class_names = self._load_class_names()
+        
         self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
         
         # Get model metadata and input shape
         self.input_shape = self.engine.get_binding_shape(0)
         self.batch_size = self.input_shape[0]
-        self.class_names = self._load_class_names()
 
     def _load_class_names(self):
         """Loads class names from a file named class_names.txt in the same directory as the engine."""
         class_names_path = self.engine_path.parent / "class_names.txt"
         print(f"[INFO] Loading class names from: {class_names_path}")
-        if not class_names_path.exists():
-            print(f"[ERROR] class_names.txt not found at {class_names_path}. Using generic names.")
-            # Fallback for safety, infers number of classes from model output shape
-            output_shape = self.engine.get_binding_shape(1) 
-            num_classes = output_shape[-1] - 4 # Assumes output is [box, conf, classes...]
-            return [f"class_{i}" for i in range(num_classes)]
-        with open(class_names_path, "r") as f:
-            return [line.strip() for line in f.readlines() if line.strip()]
+        try:
+            with open(class_names_path, "r") as f:
+                return [line.strip() for line in f.readlines() if line.strip()]
+        except FileNotFoundError:
+            print(f"[ERROR] '{class_names_path}' not found. Cannot determine class names.")
+            raise SystemExit("Aborting: Missing class_names.txt file.")
 
     def _load_engine(self):
         print(f"[INFO] Loading TensorRT engine from: {self.engine_path}")
+        if not self.engine_path.exists():
+            print(f"[ERROR] Engine file not found at '{self.engine_path}'.")
+            raise SystemExit("Aborting: Please generate the .engine file first.")
         with open(self.engine_path, "rb") as f, trt.Runtime(TRT_LOGGER) as runtime:
             return runtime.deserialize_cuda_engine(f.read())
 
@@ -74,7 +79,11 @@ class TRTDetector:
         self.stream.synchronize()
 
         # Postprocess
-        output_data = self.outputs[0]['host'].reshape(self.batch_size, -1, len(self.class_names) + 4)
+        # THIS IS THE CRITICAL FIX: The output shape is calculated dynamically
+        # using the number of classes we loaded from the file.
+        output_shape = (self.batch_size, -1, len(self.class_names) + 4) # 4 for box coords
+        output_data = self.outputs[0]['host'].reshape(output_shape)
+        
         detections = self._postprocess(output_data, ratio, dwdh)
         return detections
 
@@ -103,13 +112,16 @@ class TRTDetector:
         output = np.squeeze(output).T
         boxes, scores, class_ids = [], [], []
         
-        # Transpose and filter
+        # Filter based on confidence threshold
         conf_threshold = 0.25
+        # In YOLOv8, object confidence is in the 4th column
         output = output[output[:, 4] > conf_threshold]
 
         for row in output:
-            class_id = np.argmax(row[4:])
-            prob = row[4 + class_id]
+            # The class probabilities start from the 5th column onwards
+            class_probs = row[4:]
+            class_id = np.argmax(class_probs)
+            prob = class_probs[class_id]
             
             xc, yc, w, h = row[:4]
             x1 = (xc - w / 2 - dwdh[0]) / ratio
