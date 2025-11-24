@@ -123,16 +123,16 @@ fi
 echo_info "Successfully installed Python build dependencies."
 
 # --- 8. Increase Swap Space for OpenCV Compilation ---
-echo_info "OpenCV compilation requires significant memory. Temporarily increasing swap space..."
+echo_info "OpenCV compilation requires significant memory. Temporarily increasing swap space to 30GB..."
 # Disable ZRAM to prevent conflicts if it exists
 systemctl disable nvzramconfig &>/dev/null || true
 # Turn off all existing swap
 swapoff --all
-# Create a new 6GB swap file
-fallocate -l 6G /mnt/6G.swap
-chmod 600 /mnt/6G.swap
-mkswap /mnt/6G.swap
-swapon /mnt/6G.swap
+# Create a new 30GB swap file
+fallocate -l 30G /mnt/30G.swap
+chmod 600 /mnt/30G.swap
+mkswap /mnt/30G.swap
+swapon /mnt/30G.swap
 echo_info "Current swap status:"
 swapon --show
 free -h
@@ -147,8 +147,8 @@ INSTALL_SUCCESS=$? # Save the exit code of the installation
 # --- 10. Restore Original Swap Configuration ---
 echo_info "Restoring original swap configuration..."
 # Turn off and remove the temporary swap file
-swapoff /mnt/6G.swap
-rm /mnt/6G.swap
+swapoff /mnt/30G.swap
+rm /mnt/30G.swap
 # Re-enable ZRAM if it was originally present
 systemctl enable nvzramconfig &>/dev/null || true
 systemctl start nvzramconfig &>/dev/null || true
