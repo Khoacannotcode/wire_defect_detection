@@ -21,7 +21,7 @@ echo "[INFO] Launching the GUI application..."
 echo "[INFO] Using system Python environment."
 
 # Run the main GUI application
-python3 main_gui.py
+python3 gui_detection_runner.py
 
 echo "[INFO] Application finished."
 
