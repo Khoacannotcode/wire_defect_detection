@@ -37,16 +37,39 @@ class TRTDetector:
             raise RuntimeError(f"CUDA device not available: {e}. Please check CUDA installation.")
         
         self.engine = self._load_engine()
-        self.context = self.engine.create_execution_context()
+        # Store engine but create execution context lazily per-thread
+        # TensorRT execution context is not thread-safe - each thread needs its own context
+        self._context = None
+        self._context_lock = threading.Lock()
         
         # Load class names FIRST, as they are needed for buffer allocation logic
         self.class_names = self._load_class_names()
         
+        # Allocate buffers (shared across threads, but access is serialized)
         try:
             self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
         except Exception as e:
             print(f"[ERROR] Failed to allocate CUDA buffers: {e}")
             raise RuntimeError(f"Buffer allocation failed: {e}")
+    
+    def _get_context(self):
+        """
+        Get or create execution context for current thread.
+        TensorRT execution context is not thread-safe - each thread needs its own context.
+        """
+        thread_id = threading.current_thread().ident
+        if not hasattr(self, '_thread_contexts'):
+            self._thread_contexts = {}
+        
+        if thread_id not in self._thread_contexts:
+            # Create new execution context for this thread
+            with self._context_lock:
+                # Double-check after acquiring lock
+                if thread_id not in self._thread_contexts:
+                    print(f"[DEBUG] Creating TensorRT execution context for thread {thread_id}")
+                    self._thread_contexts[thread_id] = self.engine.create_execution_context()
+        
+        return self._thread_contexts[thread_id]
         
         # Get model metadata and input shape
         self.input_shape = self.engine.get_binding_shape(0)
@@ -116,6 +139,10 @@ class TRTDetector:
             print(f"[ERROR] Preprocessing failed: {e}")
             return []
         
+        # CRITICAL: Get thread-specific execution context
+        # TensorRT execution context is NOT thread-safe - each thread needs its own context
+        context = self._get_context()
+        
         # CRITICAL: Serialize CUDA operations with lock to avoid multi-threading issues
         # CUDA context is not thread-safe - all operations must be serialized
         with _cuda_lock:
@@ -127,9 +154,9 @@ class TRTDetector:
                 print(f"[ERROR] Failed to copy input to device: {e}")
                 return []
 
-            # Run inference
+            # Run inference using thread-specific context
             try:
-                success = self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
+                success = context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
                 if not success:
                     print("[ERROR] TensorRT inference execution returned False")
                     return []
@@ -142,7 +169,7 @@ class TRTDetector:
                 print("  - Or engine was built on a different device")
                 print("=" * 60)
                 print("[INFO] If test_with_images.py works but GUI doesn't:")
-                print("  - This is a CUDA threading issue (now fixed with lock)")
+                print("  - This is a CUDA threading issue - using per-thread execution context")
                 print("[INFO] If both fail, rebuild engine:")
                 print("  cd shipping")
                 print("  ./rebuild_engine.sh")
