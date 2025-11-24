@@ -110,58 +110,54 @@ class TRTDetector:
 
     def _postprocess(self, output, ratio, dwdh):
         """
-        Final, corrected version of post-processing.
-        The TensorRT engine output is already transposed to (8400, 10).
-        This function works directly on that format.
+        Final, corrected post-processing function based on standard YOLOv8 ONNX examples.
+        This version correctly handles the transposed output and NMS logic.
         """
-        # Squeeze to remove the batch dimension, giving us (8400, 10)
-        output = np.squeeze(output)
+        # The output from the model is shape (1, 10, 8400).
+        # Squeeze to (10, 8400) and transpose to (8400, 10).
+        # Each row now represents one of the 8400 possible detections.
+        predictions = np.squeeze(output).T
 
+        # Filter out predictions with confidence lower than threshold.
+        # In this format, the confidence score of a prediction is the highest score
+        # among its class probabilities.
         conf_threshold = 0.25
         
-        # In this (8400, 10) format:
-        # Each row is a prediction.
-        # Columns 0-3 are box coords (cx, cy, w, h).
-        # Columns 4-9 are the 6 class probabilities.
-        class_probs = output[:, 4:]
+        # Get the scores for all classes for all predictions.
+        class_probs = predictions[:, 4:]
+        # Get the max score for each prediction.
         max_scores = np.max(class_probs, axis=1)
+        # Filter all predictions with a score lower than the threshold.
+        predictions = predictions[max_scores > conf_threshold]
+        max_scores = max_scores[max_scores > conf_threshold]
 
-        # Filter rows based on the max class probability
-        mask = max_scores > conf_threshold
-        output = output[mask]
-        max_scores = max_scores[mask]
-
-        if output.shape[0] == 0:
+        if predictions.shape[0] == 0:
             return []
 
-        # Get the corresponding class IDs for the filtered predictions
-        class_ids = np.argmax(output[:, 4:], axis=1)
+        # Get the class IDs for the filtered predictions.
+        class_ids = np.argmax(predictions[:, 4:], axis=1)
         
-        # Extract box coordinates and rescale them
-        boxes_raw = output[:, :4]
+        # Rescale the box coordinates to the original image space.
+        boxes_raw = predictions[:, :4]
         boxes_rescaled = self.rescale_boxes(boxes_raw, ratio, dwdh)
 
-        # Convert boxes to the format required by NMS: (x_top_left, y_top_left, width, height)
+        # Apply Non-Maximum Suppression to filter out overlapping boxes.
+        nms_threshold = 0.5
+        # Convert boxes_rescaled (x1, y1, x2, y2) to (x, y, width, height) for NMSBoxes
         boxes_for_nms = []
         for box in boxes_rescaled:
             x1, y1, x2, y2 = box
-            width = x2 - x1
-            height = y2 - y1
-            boxes_for_nms.append([int(x1), int(y1), int(width), int(height)])
-
-        # Apply Non-Maximum Suppression
-        nms_threshold = 0.5
+            boxes_for_nms.append([int(x1), int(y1), int(x2 - x1), int(y2 - y1)])
+        
         indices = cv2.dnn.NMSBoxes(boxes_for_nms, max_scores.tolist(), conf_threshold, nms_threshold)
         
         detections = []
         if len(indices) > 0:
             for i in indices.flatten():
                 # Get the final box in (x1, y1, x2, y2) format
-                x, y, w, h = boxes_for_nms[i]
-                final_box = [x, y, x + w, y + h]
-
+                x1, y1, x2, y2 = boxes_rescaled[i]
                 detections.append({
-                    'box': final_box,
+                    'box': [int(x1), int(y1), int(x2), int(y2)],
                     'confidence': max_scores[i],
                     'class_name': self.class_names[class_ids[i]]
                 })
