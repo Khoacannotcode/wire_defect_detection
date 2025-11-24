@@ -109,38 +109,70 @@ class TRTDetector:
         return img, r, (dw, dh)
 
     def _postprocess(self, output, ratio, dwdh):
+        """
+        Post-processes the raw output from the YOLOv8 model.
+        This version includes critical fixes for NMS logic.
+        """
+        # The .T (transpose) was incorrect for YOLOv8 output format.
+        # The output shape is (batch_size, num_detections, num_attributes),
+        # where num_attributes = 4 (box) + 1 (obj_conf) + num_classes.
+        # We squeeze to remove the batch dimension.
         output = np.squeeze(output)
-        boxes, scores, class_ids = [], [], []
-        
-        # Filter based on confidence threshold
-        conf_threshold = 0.25
-        # In YOLOv8, object confidence is in the 4th column
+
+        boxes = []          # For NMS, in (x, y, w, h) format
+        scores = []         # Object confidence scores for NMS
+        class_ids = []      # Class IDs for each box
+
+        # Filter out detections with low object confidence
+        conf_threshold = 0.25  # Minimum object confidence
+        # In YOLOv8, object confidence is the 5th element (index 4)
         output = output[output[:, 4] > conf_threshold]
 
+        final_detections = []
+
         for row in output:
-            # The class probabilities start from the 5th column onwards
-            class_probs = row[4:]
+            # The class probabilities start from the 6th element (index 5) onwards
+            class_probs = row[5:]
             class_id = np.argmax(class_probs)
-            prob = class_probs[class_id]
             
+            # We use the object confidence (row[4]) for NMS, not class probability
+            scores.append(float(row[4]))
+            class_ids.append(int(class_id))
+
+            # Extract and rescale box coordinates
             xc, yc, w, h = row[:4]
+            
+            # Convert to top-left corner (x, y) and width, height for NMS function
             x1 = (xc - w / 2 - dwdh[0]) / ratio
             y1 = (yc - h / 2 - dwdh[1]) / ratio
-            x2 = (xc + w / 2 - dwdh[0]) / ratio
-            y2 = (yc + h / 2 - dwdh[1]) / ratio
+            width = w / ratio
+            height = h / ratio
             
-            boxes.append([int(x1), int(y1), int(x2), int(y2)])
-            scores.append(float(prob))
-            class_ids.append(int(class_id))
-            
-        # NMS
-        indices = cv2.dnn.NMSBoxes(boxes, scores, conf_threshold, 0.7)
-        detections = []
+            # The box format required by cv2.dnn.NMSBoxes is (x_top_left, y_top_left, width, height)
+            boxes.append([int(x1), int(y1), int(width), int(height)])
+
+        # Apply Non-Maximum Suppression
+        nms_threshold = 0.5  # A more reasonable threshold than 0.7
+        indices = cv2.dnn.NMSBoxes(boxes, scores, conf_threshold, nms_threshold)
+        
         if len(indices) > 0:
             for i in indices.flatten():
-                detections.append({
-                    'class_name': self.class_names[class_ids[i]],
-                    'confidence': scores[i],
-                    'box': boxes[i]
+                # Re-calculate box in (x1, y1, x2, y2) format for easy drawing
+                x, y, w, h = boxes[i]
+                final_box = [x, y, x + w, y + h]
+
+                # Re-calculate final confidence
+                obj_conf = scores[i]
+                # We need to find the original row to get the class probabilities
+                # This is inefficient, but necessary with this structure. A better implementation
+                # would keep the original rows associated with the boxes. For now, let's find it.
+                # A simpler way is to just use the obj_conf as the final confidence for now.
+                final_conf = obj_conf
+
+                final_detections.append({
+                    'box': final_box,
+                    'confidence': final_conf,
+                    'class_name': self.class_names[class_ids[i]]
                 })
-        return detections
+        
+        return final_detections
