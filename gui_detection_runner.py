@@ -436,7 +436,9 @@ class DetectionGUI:
         width = self.config.get('camera_width', 1280)
         height = self.config.get('camera_height', 720)
         fps = self.config.get('camera_fps', 30)
-        use_gstreamer = self.config.get('use_gstreamer', False)
+        use_gstreamer = self.config.get('use_gstreamer', True)  # Default True for Jetson (proven to work)
+        
+        print(f"[DEBUG] Camera config: source={source}, width={width}, height={height}, fps={fps}, use_gstreamer={use_gstreamer}")
         
         try:
             self.capture = open_capture(source, width, height, fps, use_gstreamer)

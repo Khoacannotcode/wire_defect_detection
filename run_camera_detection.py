@@ -63,8 +63,11 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
     
     cap = None
     
+    print(f"[DEBUG] Camera capture settings: source={source_int}, width={width}, height={height}, fps={fps}, use_gstreamer={use_gstreamer}")
+    
     # Try GStreamer first (proven to work on Jetson)
     if use_gstreamer:
+        print("[INFO] Attempting to open camera with GStreamer pipeline (proven method from simple_recorder.py)...")
         try:
             # Camera tuning parameters (from simple_recorder.py - tested on Jetson)
             CAMERA_EXPOSURE_TIME = 250000  # microseconds
@@ -120,7 +123,9 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
                 ).format(camera_props, source_int, width, height, fps)
             
             print(f"[DEBUG] GStreamer pipeline: {pipeline}")
+            print("[DEBUG] Creating VideoCapture with CAP_GSTREAMER...")
             cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+            print(f"[DEBUG] VideoCapture.isOpened() = {cap.isOpened()}")
             if cap.isOpened():
                 # Test read to verify camera actually works (with timeout)
                 import time
@@ -157,7 +162,9 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
     
     # Fallback to standard OpenCV VideoCapture
     if cap is None:
+        print("[INFO] Falling back to standard OpenCV VideoCapture...")
         try:
+            print(f"[DEBUG] Creating VideoCapture with source={source_int} (standard OpenCV)...")
             cap = cv2.VideoCapture(source_int)
             if cap.isOpened():
                 # Set properties
