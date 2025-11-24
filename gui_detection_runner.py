@@ -595,18 +595,28 @@ class DetectionGUI:
         frame = self.current_frame_raw
         self.current_frame_raw = None  # Clear to prevent reprocessing
         
-        # Crop to ROI for display
+        # CRITICAL: Always crop to ROI for display (as it was done before)
+        # This ensures only the ROI region is shown in GUI, not the full 16:9 frame
         if self.detector:
             roi_frame, roi_info = self.detector.crop_to_roi(frame)
         else:
-            roi_frame = frame
-            roi_info = None
+            # If detector not available, still crop using default ratio
+            h, w = frame.shape[:2]
+            crop_ratio = 0.6  # Default ROI ratio (60% center width)
+            crop_width = int(w * crop_ratio)
+            start_x = (w - crop_width) // 2
+            roi_frame = frame[:, start_x:start_x + crop_width]
+            roi_info = {'start_x': start_x, 'end_x': start_x + crop_width, 'width': crop_width, 'height': h}
         
         # Run detection in MAIN THREAD (single-threaded TensorRT inference)
         if self.detector:
             try:
+                # Run detection on full frame (detector handles ROI cropping internally)
                 annotated_frame, detections, processing_time = self.detector.detect_frame(frame)
-                # Crop annotated frame to ROI for display
+                
+                # CRITICAL: Crop annotated frame to ROI for display
+                # The annotated_frame contains detections drawn on full frame,
+                # but GUI should only show ROI region (as it was before)
                 annotated_roi, _ = self.detector.crop_to_roi(annotated_frame)
                 
                 # Update detector statistics (detection counts, FPS history)
@@ -627,16 +637,18 @@ class DetectionGUI:
                 # Increment frame number
                 self.frame_number += 1
                 
-                # Store for GUI update
+                # Store cropped ROI frame for GUI update (always cropped, never full frame)
                 self.current_frame = annotated_roi
                 self.current_detections = detections
             except Exception as e:
                 print("[ERROR] Detection failed: {}".format(e))
                 import traceback
                 traceback.print_exc()
+                # On error, still use cropped ROI frame (not full frame)
                 self.current_frame = roi_frame
                 self.current_detections = []
         else:
+            # No detector: use cropped ROI frame (not full frame)
             self.current_frame = roi_frame
             self.current_detections = []
             # Still increment frame number
