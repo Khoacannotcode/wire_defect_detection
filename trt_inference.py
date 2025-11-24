@@ -45,9 +45,9 @@ class TRTDetector:
         # Load class names FIRST, as they are needed for buffer allocation logic
         self.class_names = self._load_class_names()
         
-        # Allocate buffers (shared across threads, but access is serialized)
+        # Allocate buffers (host and device memory - shared, but access serialized)
         try:
-            self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
+            self.inputs, self.outputs, self.bindings = self._allocate_buffers()
         except Exception as e:
             print(f"[ERROR] Failed to allocate CUDA buffers: {e}")
             raise RuntimeError(f"Buffer allocation failed: {e}")
@@ -65,24 +65,32 @@ class TRTDetector:
                 print(f"[DEBUG] Class names: {self.class_names}")
                 break
     
-    def _get_context(self):
+    def _get_context_and_stream(self):
         """
-        Get or create execution context for current thread.
-        TensorRT execution context is not thread-safe - each thread needs its own context.
+        Get or create execution context and CUDA stream for current thread.
+        Both TensorRT execution context and CUDA stream are not thread-safe.
+        Each thread needs its own context and stream.
         """
         thread_id = threading.current_thread().ident
         if not hasattr(self, '_thread_contexts'):
             self._thread_contexts = {}
+        if not hasattr(self, '_thread_streams'):
+            self._thread_streams = {}
         
         if thread_id not in self._thread_contexts:
-            # Create new execution context for this thread
+            # Create new execution context and stream for this thread
             with self._context_lock:
                 # Double-check after acquiring lock
                 if thread_id not in self._thread_contexts:
-                    print(f"[DEBUG] Creating TensorRT execution context for thread {thread_id}")
-                    self._thread_contexts[thread_id] = self.engine.create_execution_context()
+                    print(f"[DEBUG] Creating TensorRT execution context and CUDA stream for thread {thread_id}")
+                    # Create execution context
+                    context = self.engine.create_execution_context()
+                    # Create CUDA stream for this thread
+                    stream = cuda.Stream()
+                    self._thread_contexts[thread_id] = context
+                    self._thread_streams[thread_id] = stream
         
-        return self._thread_contexts[thread_id]
+        return self._thread_contexts[thread_id], self._thread_streams[thread_id]
 
     def _load_class_names(self):
         """Loads class names from a file named class_names.txt in the same directory as the engine."""
@@ -104,7 +112,11 @@ class TRTDetector:
             return runtime.deserialize_cuda_engine(f.read())
 
     def _allocate_buffers(self):
-        inputs, outputs, bindings, stream = [], [], [], cuda.Stream()
+        """
+        Allocate CUDA buffers (host and device memory).
+        Note: CUDA stream is created per-thread, not here.
+        """
+        inputs, outputs, bindings = [], [], []
         for binding in self.engine:
             size = trt.volume(self.engine.get_binding_shape(binding)) * self.engine.max_batch_size
             dtype = trt.nptype(self.engine.get_binding_dtype(binding))
@@ -115,7 +127,7 @@ class TRTDetector:
                 inputs.append({'host': host_mem, 'device': device_mem})
             else:
                 outputs.append({'host': host_mem, 'device': device_mem})
-        return inputs, outputs, bindings, stream
+        return inputs, outputs, bindings
         
     def detect(self, image):
         """
@@ -139,47 +151,48 @@ class TRTDetector:
             print(f"[ERROR] Preprocessing failed: {e}")
             return []
         
-        # CRITICAL: Get thread-specific execution context
-        # TensorRT execution context is NOT thread-safe - each thread needs its own context
-        context = self._get_context()
+        # CRITICAL: Get thread-specific execution context and CUDA stream
+        # Both TensorRT execution context and CUDA stream are NOT thread-safe
+        # Each thread needs its own context and stream
+        context, stream = self._get_context_and_stream()
         
         # CRITICAL: Serialize CUDA operations with lock to avoid multi-threading issues
         # CUDA context is not thread-safe - all operations must be serialized
         with _cuda_lock:
-            # Copy input data to device
+            # Copy input data to device using thread-specific stream
             try:
                 np.copyto(self.inputs[0]['host'], input_image.ravel())
-                cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], self.stream)
+                cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], stream)
             except Exception as e:
                 print(f"[ERROR] Failed to copy input to device: {e}")
                 return []
 
-            # Run inference using thread-specific context
+            # Run inference using thread-specific context and stream
             try:
-                success = context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
+                success = context.execute_async_v2(bindings=self.bindings, stream_handle=stream.handle)
                 if not success:
                     print("[ERROR] TensorRT inference execution returned False")
                     return []
             except Exception as e:
                 print(f"[ERROR] TensorRT inference error: {e}")
                 print("=" * 60)
-                print("[ERROR] TensorRT 'invalid resource handle' detected!")
+                print("[ERROR] TensorRT execution error detected!")
                 print("[ERROR] This usually means:")
-                print("  - CUDA context conflict in multi-threaded environment")
+                print("  - CUDA context/stream conflict in multi-threaded environment")
                 print("  - Or engine was built on a different device")
                 print("=" * 60)
                 print("[INFO] If test_with_images.py works but GUI doesn't:")
-                print("  - This is a CUDA threading issue - using per-thread execution context")
+                print("  - This is a CUDA threading issue - using per-thread context and stream")
                 print("[INFO] If both fail, rebuild engine:")
                 print("  cd shipping")
                 print("  ./rebuild_engine.sh")
                 print("=" * 60)
                 return []
 
-            # Copy output data from device
+            # Copy output data from device using thread-specific stream
             try:
-                cuda.memcpy_dtoh_async(self.outputs[0]['host'], self.outputs[0]['device'], self.stream)
-                self.stream.synchronize()
+                cuda.memcpy_dtoh_async(self.outputs[0]['host'], self.outputs[0]['device'], stream)
+                stream.synchronize()
             except Exception as e:
                 print(f"[ERROR] Failed to copy output from device: {e}")
                 return []
