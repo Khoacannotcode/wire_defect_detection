@@ -46,10 +46,11 @@ apt-get install -y python3-pip
 # hardware-accelerated version is used.
 echo
 echo "[INFO] Uninstalling potentially conflicting OpenCV packages..."
-python3 -m pip uninstall -y opencv-python opencv-python-headless
+# Use sudo's -H flag to ensure pip operates in the root user's home directory, avoiding cache permission issues.
+sudo -H python3 -m pip uninstall -y opencv-python opencv-python-headless || echo "[WARN] opencv-python not found, skipping uninstall. This is expected."
 
 echo "[INFO] Installing required Python packages (numpy, pycuda)..."
-python3 -m pip install numpy pycuda
+sudo -H python3 -m pip install numpy pycuda
 
 # --- 5. Finalization ---
 echo

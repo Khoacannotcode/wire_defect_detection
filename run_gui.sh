@@ -1,60 +1,27 @@
 #!/bin/bash
-# Wire Defect Detection - GUI Launcher for Linux/Jetson Nano
-# Double-click this file (or run from terminal) to run the GUI application
-# Script automatically activates virtual environment and runs GUI
 
-echo "========================================"
-echo "Wire Defect Detection - GUI Launcher"
-echo "========================================"
-echo ""
+# ==============================================================================
+# GUI Runner for Wire Defect Detection
+# ==============================================================================
+# This script launches the main GUI application.
+# It assumes that the environment has been correctly set up by the
+# `setup_environment.sh` script, meaning all required Python packages are
+# available in the system's Python environment.
+# ==============================================================================
 
-# Get the directory where this script is located
-cd "$(dirname "$0")"
+set -e # Exit immediately if a command exits
 
-# Check if venv exists
-if [ ! -f "venv/bin/activate" ]; then
-    echo "[ERROR] Virtual environment not found!"
-    echo ""
-    echo "Please run setup_environment.sh first to create the virtual environment."
-    echo ""
-    read -p "Press Enter to exit..."
-    exit 1
-fi
+# Get the directory of the script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 
-# Activate virtual environment
-echo "[INFO] Activating virtual environment..."
-source venv/bin/activate
+# Navigate to the script's directory to ensure relative paths work correctly
+cd "$SCRIPT_DIR"
 
-# Check if Python is available
-if ! command -v python &> /dev/null; then
-    echo "[ERROR] Python not found in virtual environment!"
-    echo ""
-    echo "Please check your virtual environment setup."
-    echo ""
-    read -p "Press Enter to exit..."
-    exit 1
-fi
+echo "[INFO] Launching the GUI application..."
+echo "[INFO] Using system Python environment."
 
-# Check if GUI script exists
-if [ ! -f "gui_detection_runner.py" ]; then
-    echo "[ERROR] gui_detection_runner.py not found!"
-    echo ""
-    echo "Please ensure you are in the shipping directory."
-    echo ""
-    read -p "Press Enter to exit..."
-    exit 1
-fi
+# Run the main GUI application
+python3 main_gui.py
 
-# Run GUI
-echo "[INFO] Starting GUI application..."
-echo ""
-python gui_detection_runner.py
-
-# If GUI exits, keep terminal open to show any errors
-if [ $? -ne 0 ]; then
-    echo ""
-    echo "[ERROR] GUI application exited with an error."
-    echo ""
-    read -p "Press Enter to exit..."
-fi
+echo "[INFO] Application finished."
 
