@@ -40,17 +40,18 @@ CLASS_COLORS = {
 DEFAULT_COLOR = (128, 128, 128)
 
 
-def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=False):
+def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
     """
-    Open camera capture with proper settings.
+    Open camera capture with proper settings and fallback.
     Compatible with both USB and CSI cameras on Jetson Nano.
+    Uses proven GStreamer pipeline from simple_recorder.py (tested on Jetson).
     
     Args:
         source: Camera source (int for index, or string for path)
         width: Frame width
         height: Frame height
         fps: Frames per second
-        use_gstreamer: Whether to use GStreamer pipeline
+        use_gstreamer: Whether to use GStreamer pipeline (default: True for Jetson)
     
     Returns:
         cv2.VideoCapture object or None if failed
@@ -60,23 +61,99 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=False):
     except ValueError:
         source_int = source
     
+    cap = None
+    
+    # Try GStreamer first (proven to work on Jetson)
     if use_gstreamer:
-        # GStreamer pipeline for CSI camera
-        pipeline = (
-            f"nvarguscamerasrc sensor-id={source_int} ! "
-            f"video/x-raw(memory:NVMM), width={width}, height={height}, format=NV12, framerate={fps}/1 ! "
-            f"nvvidconv flip-method=0 ! "
-            f"video/x-raw, width={width}, height={height}, format=BGRx ! "
-            f"videoconvert ! "
-            f"video/x-raw, format=BGR ! appsink"
-        )
-        cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-    else:
-        cap = cv2.VideoCapture(source_int)
-        if cap.isOpened():
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-            cap.set(cv2.CAP_PROP_FPS, fps)
+        try:
+            # Camera tuning parameters (from simple_recorder.py - tested on Jetson)
+            CAMERA_EXPOSURE_TIME = 250000  # microseconds
+            CAMERA_ANALOG_GAIN = 7.0
+            ISP_DIGITAL_GAIN = 1.0
+            TNR_MODE = 0               # 0=Off, 1=Fast, 2=HighQuality
+            TNR_STRENGTH = 0.4         # -1 (auto) to 1
+            EE_MODE = 0                # 0=Off, 1=Fast, 2=HighQuality
+            EE_STRENGTH = 0.2          # -1 (auto) to 1
+            EXPOSURE_COMPENSATION = -2.0
+            SENSOR_MODE = 5            # 1280x720 @120fps
+            
+            # Build camera property string (exact format from simple_recorder.py)
+            camera_props = (
+                f'sensor-mode={SENSOR_MODE} '
+                f'exposuretimerange="{CAMERA_EXPOSURE_TIME} {CAMERA_EXPOSURE_TIME}" '
+                f'gainrange="{CAMERA_ANALOG_GAIN} {CAMERA_ANALOG_GAIN}" '
+                f'ispdigitalgainrange="{ISP_DIGITAL_GAIN} {ISP_DIGITAL_GAIN}" '
+                f'tnr-mode={TNR_MODE} tnr-strength={TNR_STRENGTH} '
+                f'ee-mode={EE_MODE} ee-strength={EE_STRENGTH} '
+                f'exposurecompensation={EXPOSURE_COMPENSATION}'
+            )
+            
+            # Build GStreamer pipeline (exact format from simple_recorder.py - proven to work)
+            # Note: sensor-id is added if source_int > 0, otherwise use default
+            if source_int == 0:
+                pipeline = (
+                    f'nvarguscamerasrc {camera_props} ! '
+                    f'video/x-raw(memory:NVMM), width={width}, height={height}, format=NV12, framerate={fps}/1 ! '
+                    f'nvvidconv ! video/x-raw, format=BGRx ! '
+                    f'videoconvert ! video/x-raw, format=BGR ! '
+                    f'appsink max-buffers=1 drop=true'
+                )
+            else:
+                pipeline = (
+                    f'nvarguscamerasrc {camera_props} sensor-id={source_int} ! '
+                    f'video/x-raw(memory:NVMM), width={width}, height={height}, format=NV12, framerate={fps}/1 ! '
+                    f'nvvidconv ! video/x-raw, format=BGRx ! '
+                    f'videoconvert ! video/x-raw, format=BGR ! '
+                    f'appsink max-buffers=1 drop=true'
+                )
+            
+            cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+            if cap.isOpened():
+                # Test read to verify camera actually works
+                ret, test_frame = cap.read()
+                if ret and test_frame is not None:
+                    print(f"[INFO] Camera opened successfully using GStreamer (with tuning parameters)")
+                    return cap
+                else:
+                    print("[WARN] GStreamer opened but cannot read frames, falling back to OpenCV")
+                    cap.release()
+                    cap = None
+            else:
+                print("[WARN] GStreamer failed to open camera, falling back to OpenCV")
+                cap = None
+        except Exception as e:
+            print(f"[WARN] GStreamer error: {e}, falling back to OpenCV")
+            if cap:
+                cap.release()
+            cap = None
+    
+    # Fallback to standard OpenCV VideoCapture
+    if cap is None:
+        try:
+            cap = cv2.VideoCapture(source_int)
+            if cap.isOpened():
+                # Set properties
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                cap.set(cv2.CAP_PROP_FPS, fps)
+                
+                # Test read to verify camera actually works
+                ret, test_frame = cap.read()
+                if ret and test_frame is not None:
+                    actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    print(f"[INFO] Camera opened successfully using OpenCV (actual resolution: {actual_width}x{actual_height})")
+                    return cap
+                else:
+                    print("[ERROR] Camera opened but cannot read frames")
+                    cap.release()
+                    return None
+            else:
+                print(f"[ERROR] Failed to open camera source: {source_int}")
+                return None
+        except Exception as e:
+            print(f"[ERROR] OpenCV camera error: {e}")
+            return None
     
     return cap
 

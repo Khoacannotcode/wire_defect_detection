@@ -98,7 +98,7 @@ class DetectionGUI:
             'camera_width': 1280,
             'camera_height': 720,
             'camera_fps': 30,
-            'use_gstreamer': False,
+            'use_gstreamer': True,  # Default to True for Jetson (proven to work)
             'display_width': 800,
             'display_height': 600,
             'thresholds': {}  # Per-class thresholds (will be populated after detector init)
@@ -441,7 +441,30 @@ class DetectionGUI:
         try:
             self.capture = open_capture(source, width, height, fps, use_gstreamer)
             if not self.capture or not self.capture.isOpened():
-                messagebox.showerror("Error", "Failed to open camera")
+                error_msg = (
+                    f"Failed to open camera source: {source}\n\n"
+                    "Possible solutions:\n"
+                    "1. Check camera is connected\n"
+                    "2. Try different camera source (0, 1, 2...)\n"
+                    "3. Check camera permissions\n"
+                    "4. Restart the application"
+                )
+                messagebox.showerror("Camera Error", error_msg)
+                return
+            
+            # Verify camera can actually read frames
+            ret, test_frame = self.capture.read()
+            if not ret or test_frame is None:
+                error_msg = (
+                    f"Camera opened but cannot read frames\n\n"
+                    "Possible solutions:\n"
+                    "1. Camera may be in use by another application\n"
+                    "2. Try different camera source\n"
+                    "3. Check camera connection"
+                )
+                messagebox.showerror("Camera Error", error_msg)
+                self.capture.release()
+                self.capture = None
                 return
             
             self.is_capturing = True
@@ -451,9 +474,10 @@ class DetectionGUI:
             # Enable session buttons
             self.start_btn.config(state=tk.NORMAL)
             
-            print("[INFO] Camera capture started")
+            print("[INFO] Camera capture started successfully")
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to start camera: {e}")
+            error_msg = f"Failed to start camera: {e}\n\nCheck camera connection and try again."
+            messagebox.showerror("Camera Error", error_msg)
             print(f"[ERROR] Camera start failed: {e}")
     
     def capture_loop(self):

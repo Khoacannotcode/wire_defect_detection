@@ -54,4 +54,6 @@ python3 test_with_images.py
 |---|---|
 | `python3: command not found` | Your system may be missing Python 3. This is unlikely on JetPack. |
 | `ModuleNotFoundError` (e.g., `No module named 'PIL'`) | Run the setup script to install missing dependencies: `sudo ./setup_prerequisites.sh`. This will install numpy, pycuda, and pillow required for GUI. |
-| Camera doesn't open | Ensure the camera is connected properly. Check the camera source index in the script if you have multiple cameras. |
+| Camera doesn't open | Ensure the camera is connected properly. Check the camera source index in the script if you have multiple cameras. The application will automatically fallback from GStreamer to OpenCV if needed. |
+| `TensorRT inference error: invalid resource handle` | The TensorRT engine was likely built on a different device. Rebuild the engine: `./rebuild_engine.sh` or manually: `python3 trt_converter.py` |
+| `Output is all zeros` | This usually indicates the TensorRT engine needs to be rebuilt. Run `./rebuild_engine.sh` to rebuild on the current device. |

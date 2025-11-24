@@ -26,6 +26,8 @@ class TRTDetector:
             ctx = device.make_context()
             device_name = device.name()
             print(f"[INFO] CUDA context initialized on device: {device_name}")
+            # Store context for cleanup if needed
+            self.cuda_context = ctx
         except Exception as e:
             print(f"[ERROR] Failed to initialize CUDA context: {e}")
             raise RuntimeError(f"CUDA initialization failed: {e}. Please check CUDA installation.")
@@ -130,7 +132,11 @@ class TRTDetector:
             print("  - Engine was built on a different device")
             print("  - CUDA context initialization issue")
             print("  - Engine corruption")
-            print("[INFO] Try rebuilding the engine on this device: python3 trt_converter.py")
+            print("[INFO] SOLUTION: Rebuild the engine on this device:")
+            print("  cd shipping")
+            print("  python3 trt_converter.py")
+            print("[INFO] Or delete the engine file and let GUI auto-build it:")
+            print(f"  rm {self.engine_path}")
             return []
 
         # Copy output data from device
