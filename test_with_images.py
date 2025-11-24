@@ -18,12 +18,19 @@ TEST_IMAGES_DIR = SCRIPT_DIR / "test_images"
 OUTPUT_DIR = SCRIPT_DIR / "test_images_output_trt"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# Visualization Standards (simplified, as original file is not in shipping)
-CLASS_COLORS = {
-    'NOK': (0, 0, 255), 'breaks': (0, 0, 255), 'damage': (0, 0, 255), 
-    'drops': (0, 0, 255), 'shift': (0, 0, 255),
-    'normal': (0, 255, 0)
-}
+# --- MODIFIED: Load class names and generate colors dynamically ---
+CLASS_NAMES_PATH = MODELS_DIR / "class_names.txt"
+def load_class_names(file_path):
+    if not file_path.exists():
+        print(f"[WARN] Class names file not found at {file_path}, colors will not be specific.")
+        return []
+    with open(file_path, "r") as f:
+        return [line.strip() for line in f.readlines() if line.strip()]
+
+CLASS_NAMES = load_class_names(CLASS_NAMES_PATH)
+# Generate a consistent color for each class name
+np.random.seed(42) 
+CLASS_COLORS = {name: np.random.randint(0, 255, size=3).tolist() for name in CLASS_NAMES}
 DEFAULT_COLOR = (255, 0, 0)
 
 def main():

@@ -1,0 +1,6 @@
+NOK
+breaks
+damage
+drops
+shift
+normal

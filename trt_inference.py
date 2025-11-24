@@ -10,21 +10,34 @@ import numpy as np
 import cv2
 import pycuda.autoinit
 import pycuda.driver as cuda
+from pathlib import Path
 
 TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
 
 class TRTDetector:
     def __init__(self, engine_path):
-        self.engine_path = engine_path
+        self.engine_path = Path(engine_path)
         self.engine = self._load_engine()
         self.context = self.engine.create_execution_context()
         self.inputs, self.outputs, self.bindings, self.stream = self._allocate_buffers()
         
         # Get model metadata and input shape
-        self.meta = self.engine.get_binding_name(0) # A way to get metadata if needed, though often not used in TRT directly
         self.input_shape = self.engine.get_binding_shape(0)
         self.batch_size = self.input_shape[0]
-        self.class_names = {0: 'fail', 1: 'pagan', 2: 'valid', 3: 'NOK', 4: 'breaks', 5: 'damage', 6: 'drops', 7: 'normal', 8: 'shift'} # Placeholder, will need a better way if this changes
+        self.class_names = self._load_class_names()
+
+    def _load_class_names(self):
+        """Loads class names from a file named class_names.txt in the same directory as the engine."""
+        class_names_path = self.engine_path.parent / "class_names.txt"
+        print(f"[INFO] Loading class names from: {class_names_path}")
+        if not class_names_path.exists():
+            print(f"[ERROR] class_names.txt not found at {class_names_path}. Using generic names.")
+            # Fallback for safety, infers number of classes from model output shape
+            output_shape = self.engine.get_binding_shape(1) 
+            num_classes = output_shape[-1] - 4 # Assumes output is [box, conf, classes...]
+            return [f"class_{i}" for i in range(num_classes)]
+        with open(class_names_path, "r") as f:
+            return [line.strip() for line in f.readlines() if line.strip()]
 
     def _load_engine(self):
         print(f"[INFO] Loading TensorRT engine from: {self.engine_path}")
