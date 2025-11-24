@@ -117,8 +117,10 @@ class TRTDetector:
         output = np.squeeze(output)
         
         # Transpose and then immediately make it a contiguous array in memory.
-        # This is the CRITICAL FIX to prevent memory layout bugs causing the IndexError.
         output = np.ascontiguousarray(output.T)
+
+        # --- THÊM DÒNG DEBUG 1 ---
+        print(f"DEBUG: Shape of output array: {output.shape}")
 
         conf_threshold = 0.25
         
@@ -133,6 +135,9 @@ class TRTDetector:
             return []
 
         class_ids = np.argmax(output[:, 4:], axis=1)
+
+        # --- THÊM DÒNG DEBUG 2 ---
+        print(f"DEBUG: Max class ID found before NMS: {np.max(class_ids)}")
         
         boxes_raw = output[:, :4]
         boxes_rescaled = self.rescale_boxes(boxes_raw, ratio, dwdh)
