@@ -16,10 +16,10 @@
 #   3.  Checks for CUDA Toolkit (a critical prerequisite).
 #   4.  Removes any conflicting 'venv/' directory from the project root.
 #   5.  Installs essential system packages (python3-pip).
-#   6.  Uninstalls pip packages that conflict with system versions (opencv-python).
-#   7.  VERIFIES that the system's OpenCV has the required 'dnn' module.
-#   8.  Sets up necessary environment variables for CUDA.
-#   9.  Installs required Python packages (numpy, pycuda) into the system env.
+#   6.  Installs 'opencv-contrib-python-headless' to provide a complete OpenCV.
+#   7.  Sets up necessary environment variables for CUDA.
+#   8.  Installs other required Python packages (numpy, pycuda).
+#   9.  Performs a final verification to ensure 'cv2.dnn' is available.
 #
 # Usage:
 #   Navigate to the 'shipping' directory and run:
@@ -100,26 +100,18 @@ if [ $? -ne 0 ]; then
 fi
 echo_info "System dependencies are up to date."
 
-# --- 6. Uninstall Conflicting Pip Packages ---
-# The pre-installed OpenCV on Jetson is system-optimized.
-# The pip 'opencv-python' package conflicts with it and lacks CUDA support.
-echo_info "Checking for and uninstalling 'opencv-python' to avoid conflicts..."
-pip3 uninstall -y opencv-python
-echo_info "'opencv-python' check/uninstallation complete."
-
-# --- 7. Verify System OpenCV Installation ---
-echo_info "Verifying the system's OpenCV installation for the 'dnn' module..."
-OPENCV_CHECK_RESULT=$(python3 -c "import cv2; print(hasattr(cv2, 'dnn'))" 2>/dev/null)
-
-if [ "$OPENCV_CHECK_RESULT" != "True" ]; then
-    echo_error "OpenCV verification FAILED. The required 'cv2.dnn' module is missing."
-    echo_error "This usually means the system's OpenCV installation is incomplete or not correctly linked."
-    echo_error "Setup cannot continue. Please ensure a full version of OpenCV is installed via JetPack/SDK Manager."
+# --- 6. Install OpenCV with Contrib Modules ---
+# The system's OpenCV is unreliable. We will install a complete version from pip.
+# 'headless' is used to avoid installing GUI dependencies on a server.
+echo_info "Installing 'opencv-contrib-python-headless' to ensure 'dnn' module is available..."
+pip3 install opencv-contrib-python-headless
+if [ $? -ne 0 ]; then
+    echo_error "Failed to install opencv-contrib-python-headless. Aborting."
     exit 1
 fi
-echo_info "System OpenCV verification successful. 'cv2.dnn' module found."
+echo_info "Successfully installed opencv-contrib-python-headless."
 
-# --- 8. Set CUDA Environment Variables ---
+# --- 7. Set CUDA Environment Variables ---
 echo_info "Exporting CUDA environment variables for the current session..."
 export CUDA_HOME=$CUDA_PATH
 export PATH=$CUDA_PATH/bin:$PATH
@@ -129,8 +121,8 @@ echo_info "PATH updated."
 echo_info "LD_LIBRARY_PATH updated."
 
 
-# --- 9. Install Required Python Packages ---
-echo_info "Installing required Python packages (numpy, pycuda)..."
+# --- 8. Install Other Required Python Packages ---
+echo_info "Installing other required Python packages (numpy, pycuda)..."
 pip3 install numpy
 if [ $? -ne 0 ]; then
     echo_error "Failed to install numpy. Aborting."
@@ -145,6 +137,17 @@ if [ $? -ne 0 ]; then
 fi
 echo_info "Successfully installed numpy and pycuda."
 
+
+# --- 9. Final Verification ---
+echo_info "Performing final verification to ensure 'cv2.dnn' module is now available..."
+OPENCV_CHECK_RESULT=$(python3 -c "import cv2; print(hasattr(cv2, 'dnn'))" 2>/dev/null)
+
+if [ "$OPENCV_CHECK_RESULT" != "True" ]; then
+    echo_error "FINAL VERIFICATION FAILED. The 'cv2.dnn' module is still not available after installation."
+    echo_error "This indicates a critical problem with the Python environment or pip installation."
+    exit 1
+fi
+echo_info "Final verification successful. 'cv2.dnn' module is available."
 
 # --- 10. Make Script Executable and Final Steps ---
 chmod +x "$0"
