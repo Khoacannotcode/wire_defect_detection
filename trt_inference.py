@@ -127,15 +127,21 @@ class TRTDetector:
                 return []
         except Exception as e:
             print(f"[ERROR] TensorRT inference error: {e}")
-            print("[ERROR] This may indicate:")
+            print("=" * 60)
+            print("[ERROR] TensorRT 'invalid resource handle' detected!")
+            print("[ERROR] This usually means:")
             print("  - Engine was built on a different device")
-            print("  - CUDA context initialization issue")
-            print("  - Engine corruption")
-            print("[INFO] SOLUTION: Rebuild the engine on this device:")
+            print("  - Engine needs to be rebuilt on this Jetson device")
+            print("=" * 60)
+            print("[SOLUTION] Rebuild the TensorRT engine:")
+            print("  cd shipping")
+            print("  ./rebuild_engine.sh")
+            print("")
+            print("[INFO] Or manually:")
             print("  cd shipping")
             print("  python3 trt_converter.py")
-            print("[INFO] Or delete the engine file and let GUI auto-build it:")
-            print(f"  rm {self.engine_path}")
+            print("=" * 60)
+            print("[NOTE] Camera is working fine - only TensorRT engine needs rebuild")
             return []
 
         # Copy output data from device
