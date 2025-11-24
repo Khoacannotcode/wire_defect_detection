@@ -101,26 +101,27 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
             )
             
             # Build GStreamer pipeline (EXACT format from simple_recorder.py - proven to work smoothly)
-            # Note: simple_recorder.py uses framerate=120/1, but we use fps parameter for flexibility
-            # If source_int > 0, add sensor-id (not in original simple_recorder.py but needed for multi-camera)
+            # CRITICAL: simple_recorder.py uses framerate=120/1 for sensor-mode=5
+            # Using different framerate may cause "Failed to create CaptureSession" error
+            # Use 120/1 framerate to match proven working configuration
             if source_int == 0:
-                # Exact format from simple_recorder.py (no sensor-id)
+                # Exact format from simple_recorder.py (no sensor-id, framerate=120/1)
                 pipeline = (
                     'nvarguscamerasrc {} ! '
-                    'video/x-raw(memory:NVMM), width={}, height={}, format=NV12, framerate={}/1 ! '
+                    'video/x-raw(memory:NVMM), width={}, height={}, format=NV12, framerate=120/1 ! '
                     'nvvidconv ! video/x-raw, format=BGRx ! '
                     'videoconvert ! video/x-raw, format=BGR ! '
                     'appsink max-buffers=1 drop=true'
-                ).format(camera_props, width, height, fps)
+                ).format(camera_props, width, height)
             else:
-                # Add sensor-id for multi-camera support
+                # Add sensor-id for multi-camera support (use 120/1 framerate like simple_recorder.py)
                 pipeline = (
                     'nvarguscamerasrc {} sensor-id={} ! '
-                    'video/x-raw(memory:NVMM), width={}, height={}, format=NV12, framerate={}/1 ! '
+                    'video/x-raw(memory:NVMM), width={}, height={}, format=NV12, framerate=120/1 ! '
                     'nvvidconv ! video/x-raw, format=BGRx ! '
                     'videoconvert ! video/x-raw, format=BGR ! '
                     'appsink max-buffers=1 drop=true'
-                ).format(camera_props, source_int, width, height, fps)
+                ).format(camera_props, source_int, width, height)
             
             print(f"[DEBUG] GStreamer pipeline: {pipeline}")
             print("[DEBUG] Creating VideoCapture with CAP_GSTREAMER...")
