@@ -67,28 +67,75 @@ class TRTDetector:
     
     def _get_context_and_stream(self):
         """
-        Get or create execution context and CUDA stream for current thread.
-        Both TensorRT execution context and CUDA stream are not thread-safe.
-        Each thread needs its own context and stream.
+        Get or create CUDA context, TensorRT execution context, and CUDA stream for current thread.
+        
+        CRITICAL: Each thread needs its own CUDA context (not just execution context).
+        pycuda.autoinit only creates context for main thread.
+        Other threads must create and push their own CUDA context.
+        
+        Pattern from NVIDIA forums:
+        - Each thread creates CUDA context: cuda.Device(0).make_context()
+        - Context is automatically pushed when created
+        - Keep context active for thread lifetime
+        - Pop/detach when thread ends (handled by thread cleanup)
         """
         thread_id = threading.current_thread().ident
-        if not hasattr(self, '_thread_contexts'):
-            self._thread_contexts = {}
-        if not hasattr(self, '_thread_streams'):
-            self._thread_streams = {}
         
-        if thread_id not in self._thread_contexts:
-            # Create new execution context and stream for this thread
+        # Initialize dictionaries if needed
+        if not hasattr(self, '_thread_cuda_contexts'):
+            self._thread_cuda_contexts = {}  # CUDA contexts per thread
+        if not hasattr(self, '_thread_contexts'):
+            self._thread_contexts = {}  # TensorRT execution contexts per thread
+        if not hasattr(self, '_thread_streams'):
+            self._thread_streams = {}  # CUDA streams per thread
+        
+        if thread_id not in self._thread_cuda_contexts:
+            # First time this thread calls detect() - need to create CUDA context
             with self._context_lock:
                 # Double-check after acquiring lock
-                if thread_id not in self._thread_contexts:
-                    print(f"[DEBUG] Creating TensorRT execution context and CUDA stream for thread {thread_id}")
-                    # Create execution context
-                    context = self.engine.create_execution_context()
-                    # Create CUDA stream for this thread
-                    stream = cuda.Stream()
-                    self._thread_contexts[thread_id] = context
-                    self._thread_streams[thread_id] = stream
+                if thread_id not in self._thread_cuda_contexts:
+                    print(f"[DEBUG] Creating CUDA context, TensorRT execution context, and CUDA stream for thread {thread_id}")
+                    
+                    # CRITICAL: Create CUDA context for this thread
+                    # This is required because pycuda.autoinit only creates context for main thread
+                    try:
+                        cuda.init()  # Ensure CUDA is initialized
+                        device = cuda.Device(0)
+                        cuda_context = device.make_context()
+                        # Context is automatically pushed when created
+                        self._thread_cuda_contexts[thread_id] = cuda_context
+                        print(f"[DEBUG] CUDA context created and pushed for thread {thread_id}")
+                    except Exception as e:
+                        print(f"[ERROR] Failed to create CUDA context for thread {thread_id}: {e}")
+                        raise RuntimeError(f"CUDA context creation failed: {e}")
+                    
+                    # Create TensorRT execution context (requires active CUDA context)
+                    try:
+                        trt_context = self.engine.create_execution_context()
+                        self._thread_contexts[thread_id] = trt_context
+                    except Exception as e:
+                        print(f"[ERROR] Failed to create TensorRT execution context for thread {thread_id}: {e}")
+                        # Cleanup CUDA context if TRT context creation fails
+                        try:
+                            cuda_context.pop()
+                            cuda_context.detach()
+                        except:
+                            pass
+                        raise RuntimeError(f"TensorRT execution context creation failed: {e}")
+                    
+                    # Create CUDA stream (requires active CUDA context)
+                    try:
+                        stream = cuda.Stream()
+                        self._thread_streams[thread_id] = stream
+                    except Exception as e:
+                        print(f"[ERROR] Failed to create CUDA stream for thread {thread_id}: {e}")
+                        # Cleanup if stream creation fails
+                        try:
+                            cuda_context.pop()
+                            cuda_context.detach()
+                        except:
+                            pass
+                        raise RuntimeError(f"CUDA stream creation failed: {e}")
         
         return self._thread_contexts[thread_id], self._thread_streams[thread_id]
 
