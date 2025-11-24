@@ -12,8 +12,13 @@ import cv2
 import pycuda.autoinit
 import pycuda.driver as cuda
 from pathlib import Path
+import threading
 
 TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
+
+# Thread lock for CUDA operations (CUDA context is not thread-safe)
+# All CUDA operations must be serialized to avoid "invalid resource handle" errors
+_cuda_lock = threading.Lock()
 
 class TRTDetector:
     def __init__(self, engine_path):
@@ -111,46 +116,46 @@ class TRTDetector:
             print(f"[ERROR] Preprocessing failed: {e}")
             return []
         
-        # Copy input data to device
-        try:
-            np.copyto(self.inputs[0]['host'], input_image.ravel())
-            cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], self.stream)
-        except Exception as e:
-            print(f"[ERROR] Failed to copy input to device: {e}")
-            return []
-
-        # Run inference
-        try:
-            success = self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
-            if not success:
-                print("[ERROR] TensorRT inference execution returned False")
+        # CRITICAL: Serialize CUDA operations with lock to avoid multi-threading issues
+        # CUDA context is not thread-safe - all operations must be serialized
+        with _cuda_lock:
+            # Copy input data to device
+            try:
+                np.copyto(self.inputs[0]['host'], input_image.ravel())
+                cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], self.stream)
+            except Exception as e:
+                print(f"[ERROR] Failed to copy input to device: {e}")
                 return []
-        except Exception as e:
-            print(f"[ERROR] TensorRT inference error: {e}")
-            print("=" * 60)
-            print("[ERROR] TensorRT 'invalid resource handle' detected!")
-            print("[ERROR] This usually means:")
-            print("  - Engine was built on a different device")
-            print("  - Engine needs to be rebuilt on this Jetson device")
-            print("=" * 60)
-            print("[SOLUTION] Rebuild the TensorRT engine:")
-            print("  cd shipping")
-            print("  ./rebuild_engine.sh")
-            print("")
-            print("[INFO] Or manually:")
-            print("  cd shipping")
-            print("  python3 trt_converter.py")
-            print("=" * 60)
-            print("[NOTE] Camera is working fine - only TensorRT engine needs rebuild")
-            return []
 
-        # Copy output data from device
-        try:
-            cuda.memcpy_dtoh_async(self.outputs[0]['host'], self.outputs[0]['device'], self.stream)
-            self.stream.synchronize()
-        except Exception as e:
-            print(f"[ERROR] Failed to copy output from device: {e}")
-            return []
+            # Run inference
+            try:
+                success = self.context.execute_async_v2(bindings=self.bindings, stream_handle=self.stream.handle)
+                if not success:
+                    print("[ERROR] TensorRT inference execution returned False")
+                    return []
+            except Exception as e:
+                print(f"[ERROR] TensorRT inference error: {e}")
+                print("=" * 60)
+                print("[ERROR] TensorRT 'invalid resource handle' detected!")
+                print("[ERROR] This usually means:")
+                print("  - CUDA context conflict in multi-threaded environment")
+                print("  - Or engine was built on a different device")
+                print("=" * 60)
+                print("[INFO] If test_with_images.py works but GUI doesn't:")
+                print("  - This is a CUDA threading issue (now fixed with lock)")
+                print("[INFO] If both fail, rebuild engine:")
+                print("  cd shipping")
+                print("  ./rebuild_engine.sh")
+                print("=" * 60)
+                return []
+
+            # Copy output data from device
+            try:
+                cuda.memcpy_dtoh_async(self.outputs[0]['host'], self.outputs[0]['device'], self.stream)
+                self.stream.synchronize()
+            except Exception as e:
+                print(f"[ERROR] Failed to copy output from device: {e}")
+                return []
 
         # Postprocess
         # Use the actual output shape from the engine instead of assuming
