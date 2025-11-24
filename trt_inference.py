@@ -110,21 +110,21 @@ class TRTDetector:
 
     def _postprocess(self, output, ratio, dwdh):
         """
-        Post-processes the raw output from the YOLOv8 model with correct logic.
+        Post-processes the raw output from the YOLOv8 model.
+        This version adds np.ascontiguousarray to resolve potential memory layout issues.
         """
-        # The output from the model is of shape (batch_size, num_classes + 4, num_predictions)
-        # We squeeze and transpose it to (num_predictions, num_classes + 4)
-        output = np.squeeze(output).T
+        # Squeeze to remove batch dimension
+        output = np.squeeze(output)
+        
+        # Transpose and then immediately make it a contiguous array in memory.
+        # This is the CRITICAL FIX to prevent memory layout bugs causing the IndexError.
+        output = np.ascontiguousarray(output.T)
 
-        # In this model format, the score is the max of the class probabilities.
         conf_threshold = 0.25
         
-        # Get the class probabilities (all columns from index 4 onwards)
         class_probs = output[:, 4:]
-        # Find the maximum score for each prediction
         max_scores = np.max(class_probs, axis=1)
 
-        # Filter out all predictions with a confidence score below the threshold
         mask = max_scores > conf_threshold
         output = output[mask]
         max_scores = max_scores[mask]
@@ -132,14 +132,11 @@ class TRTDetector:
         if output.shape[0] == 0:
             return []
 
-        # Get the corresponding class IDs for the filtered predictions
         class_ids = np.argmax(output[:, 4:], axis=1)
-
-        # Extract box coordinates and rescale them to the original image space
+        
         boxes_raw = output[:, :4]
         boxes_rescaled = self.rescale_boxes(boxes_raw, ratio, dwdh)
 
-        # Convert boxes to the format required by NMS: (x_top_left, y_top_left, width, height)
         boxes_for_nms = []
         for box in boxes_rescaled:
             x1, y1, x2, y2 = box
@@ -147,14 +144,12 @@ class TRTDetector:
             height = y2 - y1
             boxes_for_nms.append([int(x1), int(y1), int(width), int(height)])
 
-        # Apply Non-Maximum Suppression
         nms_threshold = 0.5
         indices = cv2.dnn.NMSBoxes(boxes_for_nms, max_scores.tolist(), conf_threshold, nms_threshold)
         
         detections = []
         if len(indices) > 0:
             for i in indices.flatten():
-                # Get the final box in (x1, y1, x2, y2) format
                 x, y, w, h = boxes_for_nms[i]
                 final_box = [x, y, x + w, y + h]
 
