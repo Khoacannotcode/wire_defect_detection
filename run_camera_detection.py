@@ -302,34 +302,49 @@ class LiveWireDetector:
         
         # ROI cropping ratio (60% center width)
         self.roi_ratio = 0.6
+        # ROI strip height (80px center strip - matches training data)
+        self.roi_strip_height = 80
     
-    def crop_to_roi(self, image, crop_ratio=None):
+    def crop_to_roi(self, image, crop_ratio=None, strip_height=None):
         """
-        Crop image to ROI (Region of Interest) - center 60% width, full height.
+        Crop image to ROI (Region of Interest) - center 60% width, 80px center strip height.
+        Result: 768x80 (very wide and short rectangle matching training data).
         
         Args:
             image: Input image (numpy array)
             crop_ratio: Crop ratio (default: 0.6 for 60% center width)
+            strip_height: Strip height (default: 80px center strip)
         
         Returns:
             (cropped_image, roi_info_dict)
-            roi_info_dict contains: {'start_x': int, 'end_x': int, 'width': int, 'height': int}
+            roi_info_dict contains: {'start_x': int, 'end_x': int, 'y_top': int, 'y_bottom': int, 'width': int, 'height': int}
         """
         if crop_ratio is None:
             crop_ratio = self.roi_ratio
+        if strip_height is None:
+            strip_height = self.roi_strip_height
         
         h, w = image.shape[:2]
+        
+        # Crop width: 60% center (768px from 1280px)
         crop_width = int(w * crop_ratio)
         start_x = (w - crop_width) // 2
         end_x = start_x + crop_width
         
-        cropped = image[:, start_x:end_x]
+        # Crop height: 80px center strip (matching training data)
+        y_top = (h - strip_height) // 2
+        y_bottom = y_top + strip_height
+        
+        # Crop both width and height
+        cropped = image[y_top:y_bottom, start_x:end_x]
         
         roi_info = {
             'start_x': start_x,
             'end_x': end_x,
+            'y_top': y_top,
+            'y_bottom': y_bottom,
             'width': crop_width,
-            'height': h
+            'height': strip_height
         }
         
         return cropped, roi_info
@@ -362,12 +377,13 @@ class LiveWireDetector:
             threshold = self.class_thresholds.get(class_name, 0.25)
             if det['confidence'] >= threshold:
                 # Adjust box coordinates back to original frame
+                # Need to adjust both x (for width crop) and y (for height crop)
                 box = det['box']
                 adjusted_box = [
-                    box[0] + roi_info['start_x'],  # x1
-                    box[1],                         # y1
-                    box[2] + roi_info['start_x'],  # x2
-                    box[3]                          # y2
+                    box[0] + roi_info['start_x'],  # x1: adjust for width crop
+                    box[1] + roi_info['y_top'],     # y1: adjust for height crop
+                    box[2] + roi_info['start_x'],  # x2: adjust for width crop
+                    box[3] + roi_info['y_top']     # y2: adjust for height crop
                 ]
                 filtered_detections.append({
                     'box': adjusted_box,

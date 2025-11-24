@@ -597,16 +597,27 @@ class DetectionGUI:
         
         # CRITICAL: Always crop to ROI for display (as it was done before)
         # This ensures only the ROI region is shown in GUI, not the full 16:9 frame
+        # ROI: 768x80 (very wide and short rectangle matching training data)
         if self.detector:
             roi_frame, roi_info = self.detector.crop_to_roi(frame)
         else:
-            # If detector not available, still crop using default ratio
+            # If detector not available, still crop using default ratio and strip height
             h, w = frame.shape[:2]
             crop_ratio = 0.6  # Default ROI ratio (60% center width)
+            strip_height = 80  # Default strip height (80px center strip)
             crop_width = int(w * crop_ratio)
             start_x = (w - crop_width) // 2
-            roi_frame = frame[:, start_x:start_x + crop_width]
-            roi_info = {'start_x': start_x, 'end_x': start_x + crop_width, 'width': crop_width, 'height': h}
+            y_top = (h - strip_height) // 2
+            y_bottom = y_top + strip_height
+            roi_frame = frame[y_top:y_bottom, start_x:start_x + crop_width]
+            roi_info = {
+                'start_x': start_x,
+                'end_x': start_x + crop_width,
+                'y_top': y_top,
+                'y_bottom': y_bottom,
+                'width': crop_width,
+                'height': strip_height
+            }
         
         # Run detection in MAIN THREAD (single-threaded TensorRT inference)
         if self.detector:
