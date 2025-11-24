@@ -111,38 +111,38 @@ class TRTDetector:
     def _postprocess(self, output, ratio, dwdh):
         """
         Post-processes the raw output from the YOLOv8 model.
-        This version includes critical fixes for NMS logic.
+        This version includes refined NMS logic for better filtering.
         """
-        # The .T (transpose) was incorrect for YOLOv8 output format.
-        # The output shape is (batch_size, num_detections, num_attributes),
-        # where num_attributes = 4 (box) + 1 (obj_conf) + num_classes.
-        # We squeeze to remove the batch dimension.
         output = np.squeeze(output)
 
-        boxes = []          # For NMS, in (x, y, w, h) format
-        scores = []         # Object confidence scores for NMS
-        class_ids = []      # Class IDs for each box
-
-        # Filter out detections with low object confidence
-        conf_threshold = 0.25  # Minimum object confidence
-        # In YOLOv8, object confidence is the 5th element (index 4)
+        # Filter out detections with a low "objectness" score
+        conf_threshold = 0.25  # This is the initial confidence threshold
         output = output[output[:, 4] > conf_threshold]
 
-        final_detections = []
+        boxes = []
+        scores = []
+        class_ids = []
 
         for row in output:
-            # The class probabilities start from the 6th element (index 5) onwards
+            # For each detection, the format is:
+            # [cx, cy, w, h, obj_conf, class_prob_1, class_prob_2, ...]
+            obj_conf = row[4]
             class_probs = row[5:]
             class_id = np.argmax(class_probs)
+            class_conf = class_probs[class_id]
             
-            # We use the object confidence (row[4]) for NMS, not class probability
-            scores.append(float(row[4]))
+            # The final confidence score is a product of objectness and class probability
+            final_conf = obj_conf * class_conf
+
+            # We perform a second filter based on this more accurate final confidence
+            if final_conf < conf_threshold:
+                continue
+
+            scores.append(float(final_conf)) # Use final confidence for NMS
             class_ids.append(int(class_id))
 
-            # Extract and rescale box coordinates
+            # Rescale box coordinates from the letterboxed image space back to the original image space
             xc, yc, w, h = row[:4]
-            
-            # Convert to top-left corner (x, y) and width, height for NMS function
             x1 = (xc - w / 2 - dwdh[0]) / ratio
             y1 = (yc - h / 2 - dwdh[1]) / ratio
             width = w / ratio
@@ -152,27 +152,20 @@ class TRTDetector:
             boxes.append([int(x1), int(y1), int(width), int(height)])
 
         # Apply Non-Maximum Suppression
-        nms_threshold = 0.5  # A more reasonable threshold than 0.7
+        nms_threshold = 0.5  # IoU threshold for NMS
         indices = cv2.dnn.NMSBoxes(boxes, scores, conf_threshold, nms_threshold)
         
+        detections = []
         if len(indices) > 0:
             for i in indices.flatten():
-                # Re-calculate box in (x1, y1, x2, y2) format for easy drawing
+                # Get the box coordinates after NMS
                 x, y, w, h = boxes[i]
-                final_box = [x, y, x + w, y + h]
+                final_box = [x, y, x + w, y + h] # Convert back to (x1, y1, x2, y2) for drawing
 
-                # Re-calculate final confidence
-                obj_conf = scores[i]
-                # We need to find the original row to get the class probabilities
-                # This is inefficient, but necessary with this structure. A better implementation
-                # would keep the original rows associated with the boxes. For now, let's find it.
-                # A simpler way is to just use the obj_conf as the final confidence for now.
-                final_conf = obj_conf
-
-                final_detections.append({
+                detections.append({
                     'box': final_box,
-                    'confidence': final_conf,
+                    'confidence': scores[i],
                     'class_name': self.class_names[class_ids[i]]
                 })
         
-        return final_detections
+        return detections
