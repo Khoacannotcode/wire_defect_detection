@@ -45,7 +45,7 @@ gst_pipeline = (
 # Open camera
 cap = cv2.VideoCapture(gst_pipeline, cv2.CAP_GSTREAMER)
 if not cap.isOpened():
-    print("❌ Could not open camera")
+    print("[ERROR] Could not open camera")
     exit()
 
 # Prepare output video writer
@@ -61,12 +61,12 @@ y_bottom = y_top + strip_height
 
 record_seconds = 60
 start_time = time.time()
-print("🎥 Recording started: {}".format(output_filename))
+print("[INFO] Recording started: {}".format(output_filename))
 
 while time.time() - start_time < record_seconds:
     ret, frame = cap.read()
     if not ret:
-        print("⚠️ Stream ended or error.")
+        print("[WARN] Stream ended or error.")
         break
 
     cropped = frame[y_top:y_bottom, :]
@@ -79,6 +79,6 @@ while time.time() - start_time < record_seconds:
 cap.release()
 out.release()
 cv2.destroyAllWindows()
-print("✅ Recording complete.")
+print("[OK] Recording complete.")
 
 

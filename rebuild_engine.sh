@@ -45,7 +45,7 @@ echo ""
 if python3 trt_converter.py; then
     echo ""
     echo "=============================================================="
-    echo "✅ Engine rebuilt successfully!"
+    echo "[OK] Engine rebuilt successfully!"
     echo "=============================================================="
     echo "[INFO] New engine saved to: $ENGINE_PATH"
     if [ -f "$BACKUP_PATH" ]; then
@@ -57,7 +57,7 @@ if python3 trt_converter.py; then
 else
     echo ""
     echo "=============================================================="
-    echo "❌ Engine rebuild failed!"
+    echo "[ERROR] Engine rebuild failed!"
     echo "=============================================================="
     echo "[ERROR] Check the error messages above for details"
     if [ -f "$BACKUP_PATH" ]; then

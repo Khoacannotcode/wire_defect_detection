@@ -28,7 +28,7 @@ echo "=============================================================="
 # --- Check Python version ---
 echo "[1/5] Checking Python version..."
 python3 --version || { echo "[ERROR] Python3 not found!"; exit 1; }
-echo "  ✅ Python3 found"
+echo "  [OK] Python3 found"
 
 # --- Check required Python packages ---
 echo "[2/5] Checking required Python packages..."
@@ -44,7 +44,7 @@ check_package "PIL"
 check_package "tkinter"
 
 if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
-    echo "  ⚠️  Missing packages: ${MISSING_PACKAGES[*]}"
+    echo "  [WARN] Missing packages: ${MISSING_PACKAGES[*]}"
     echo "  [INFO] Install missing packages with:"
     echo "    pip3 install ${MISSING_PACKAGES[*]}"
     echo "  [INFO] Or run setup_prerequisites.sh for system-wide installation"
@@ -54,52 +54,52 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
         exit 1
     fi
 else
-    echo "  ✅ All required packages found"
+    echo "  [OK] All required packages found"
 fi
 
 # --- Check TensorRT (optional, only needed for engine building) ---
 echo "[3/5] Checking TensorRT..."
 if python3 -c "import tensorrt" 2>/dev/null; then
-    echo "  ✅ TensorRT found (can build engines)"
+    echo "  [OK] TensorRT found (can build engines)"
 else
-    echo "  ⚠️  TensorRT not found (engine building will fail)"
+    echo "  [WARN] TensorRT not found (engine building will fail)"
     echo "  [INFO] TensorRT is usually pre-installed on Jetson devices"
 fi
 
 # --- Check model files ---
 echo "[4/5] Checking model files..."
 if [ ! -d "$MODELS_DIR" ]; then
-    echo "  ❌ Models directory not found: $MODELS_DIR"
+    echo "  [ERROR] Models directory not found: $MODELS_DIR"
     exit 1
 fi
 
 if [ ! -f "$CLASS_NAMES_PATH" ]; then
-    echo "  ❌ Class names file not found: $CLASS_NAMES_PATH"
+    echo "  [ERROR] Class names file not found: $CLASS_NAMES_PATH"
     exit 1
 fi
-echo "  ✅ Class names file found"
+echo "  [OK] Class names file found"
 
 if [ ! -f "$ONNX_PATH" ] && [ ! -f "$ENGINE_PATH" ]; then
-    echo "  ❌ No model files found (neither ONNX nor engine)"
+    echo "  [ERROR] No model files found (neither ONNX nor engine)"
     echo "  [INFO] Expected ONNX: $ONNX_PATH"
     echo "  [INFO] Expected engine: $ENGINE_PATH"
     exit 1
 fi
 
 if [ -f "$ONNX_PATH" ]; then
-    echo "  ✅ ONNX model found: $ONNX_PATH"
+    echo "  [OK] ONNX model found: $ONNX_PATH"
 else
-    echo "  ⚠️  ONNX model not found (will use existing engine)"
+    echo "  [WARN] ONNX model not found (will use existing engine)"
 fi
 
 if [ -f "$ENGINE_PATH" ]; then
-    echo "  ✅ TensorRT engine found: $ENGINE_PATH"
+    echo "  [OK] TensorRT engine found: $ENGINE_PATH"
 else
-    echo "  ⚠️  TensorRT engine not found"
+    echo "  [WARN] TensorRT engine not found"
     if [ -f "$ONNX_PATH" ]; then
         echo "  [INFO] Engine will be auto-built on first GUI launch"
     else
-        echo "  ❌ Cannot build engine: ONNX model not found"
+        echo "  [ERROR] Cannot build engine: ONNX model not found"
         exit 1
     fi
 fi
@@ -116,26 +116,26 @@ from pathlib import Path
 onnx_path = Path('$ONNX_PATH')
 engine_path = Path('$ENGINE_PATH')
 if build_engine(onnx_path, engine_path):
-    print('✅ Engine built successfully')
+    print('[OK] Engine built successfully')
 else:
-    print('❌ Engine build failed')
+    print('[ERROR] Engine build failed')
     exit(1)
 "; then
-            echo "  ✅ Engine built successfully"
+            echo "  [OK] Engine built successfully"
         else
-            echo "  ⚠️  Engine build failed (will retry on GUI launch)"
+            echo "  [WARN] Engine build failed (will retry on GUI launch)"
         fi
     else
-        echo "  ⚠️  Cannot build engine: TensorRT not available"
+        echo "  [WARN] Cannot build engine: TensorRT not available"
         echo "  [INFO] Engine will be built on first GUI launch (if TensorRT is available)"
     fi
 else
-    echo "  ✅ Engine ready (or will be auto-built on launch)"
+    echo "  [OK] Engine ready (or will be auto-built on launch)"
 fi
 
 echo ""
 echo "=============================================================="
-echo "✅ Setup check complete!"
+echo "[OK] Setup check complete!"
 echo "=============================================================="
 echo ""
 echo "To launch the GUI, run:"

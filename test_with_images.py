@@ -1,4 +1,5 @@
-#!/usr-bin/env python3
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Task 18, Phase 4: Verify TensorRT Performance with Image Testing (Re-created)
 - Uses the new TRTDetector for inference.
@@ -51,9 +52,9 @@ def main():
             return
         
         if build_engine(ONNX_PATH, ENGINE_PATH):
-            print("\n🎉 Successfully built TensorRT engine!")
+            print("\n[OK] Successfully built TensorRT engine!")
         else:
-            print("\n🔥 Failed to build TensorRT engine. Aborting.")
+            print("\n[ERROR] Failed to build TensorRT engine. Aborting.")
             return
 
     # 1. Initialize the TensorRT detector
@@ -63,7 +64,7 @@ def main():
     # 2. Find test images
     image_files = sorted(list(TEST_IMAGES_DIR.glob("*.jpg")))
     if not image_files:
-        print("❌ ERROR: No test images found in {}".format(TEST_IMAGES_DIR))
+        print("[ERROR] No test images found in {}".format(TEST_IMAGES_DIR))
         return
     print("[INFO] Found {} test images.".format(len(image_files)))
 

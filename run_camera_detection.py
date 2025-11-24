@@ -223,7 +223,7 @@ class LiveWireDetector:
                     )
                 
                 if build_engine(model_path, engine_path):
-                    print("✅ Successfully built TensorRT engine!")
+                    print("[OK] Successfully built TensorRT engine!")
                 else:
                     raise RuntimeError(
                         f"Failed to build TensorRT engine from {model_path}. "
@@ -417,7 +417,7 @@ def main():
     # 1. Initialize the TensorRT detector
     engine_path = Path(args.model)
     if not engine_path.exists():
-        print(f"❌ ERROR: TensorRT engine not found at {engine_path}")
+        print("[ERROR] TensorRT engine not found at {}".format(engine_path))
         return
         
     detector = TRTDetector(str(engine_path))
@@ -431,7 +431,7 @@ def main():
         
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
-        print(f"❌ ERROR: Could not open video source: {source}")
+        print("[ERROR] Could not open video source: {}".format(source))
         return
     
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
