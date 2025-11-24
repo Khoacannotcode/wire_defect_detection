@@ -45,12 +45,10 @@ class TRTDetector:
         # Load class names FIRST, as they are needed for buffer allocation logic
         self.class_names = self._load_class_names()
         
-        # Allocate buffers (host and device memory - shared, but access serialized)
-        try:
-            self.inputs, self.outputs, self.bindings = self._allocate_buffers()
-        except Exception as e:
-            print(f"[ERROR] Failed to allocate CUDA buffers: {e}")
-            raise RuntimeError(f"Buffer allocation failed: {e}")
+        # NOTE: Buffers are NOT allocated here anymore
+        # Buffers must be allocated per-thread in the same CUDA context as the thread
+        # CUDA device memory pointers are only valid within the same CUDA context
+        # Buffers will be allocated lazily per-thread in _get_context_and_stream()
         
         # Get model metadata and input shape (needed for preprocessing)
         self.input_shape = self.engine.get_binding_shape(0)
@@ -88,13 +86,15 @@ class TRTDetector:
             self._thread_contexts = {}  # TensorRT execution contexts per thread
         if not hasattr(self, '_thread_streams'):
             self._thread_streams = {}  # CUDA streams per thread
+        if not hasattr(self, '_thread_buffers'):
+            self._thread_buffers = {}  # CUDA buffers per thread (inputs, outputs, bindings)
         
         if thread_id not in self._thread_cuda_contexts:
             # First time this thread calls detect() - need to create CUDA context
             with self._context_lock:
                 # Double-check after acquiring lock
                 if thread_id not in self._thread_cuda_contexts:
-                    print(f"[DEBUG] Creating CUDA context, TensorRT execution context, and CUDA stream for thread {thread_id}")
+                    print(f"[DEBUG] Creating CUDA context, TensorRT execution context, CUDA stream, and buffers for thread {thread_id}")
                     
                     # CRITICAL: Create CUDA context for this thread
                     # This is required because pycuda.autoinit only creates context for main thread
@@ -108,6 +108,26 @@ class TRTDetector:
                     except Exception as e:
                         print(f"[ERROR] Failed to create CUDA context for thread {thread_id}: {e}")
                         raise RuntimeError(f"CUDA context creation failed: {e}")
+                    
+                    # CRITICAL: Allocate buffers in THIS thread's CUDA context
+                    # CUDA device memory pointers are only valid within the same CUDA context
+                    try:
+                        inputs, outputs, bindings = self._allocate_buffers()
+                        self._thread_buffers[thread_id] = {
+                            'inputs': inputs,
+                            'outputs': outputs,
+                            'bindings': bindings
+                        }
+                        print(f"[DEBUG] CUDA buffers allocated for thread {thread_id}")
+                    except Exception as e:
+                        print(f"[ERROR] Failed to allocate CUDA buffers for thread {thread_id}: {e}")
+                        # Cleanup CUDA context if buffer allocation fails
+                        try:
+                            cuda_context.pop()
+                            cuda_context.detach()
+                        except:
+                            pass
+                        raise RuntimeError(f"CUDA buffer allocation failed: {e}")
                     
                     # Create TensorRT execution context (requires active CUDA context)
                     try:
@@ -137,7 +157,7 @@ class TRTDetector:
                             pass
                         raise RuntimeError(f"CUDA stream creation failed: {e}")
         
-        return self._thread_contexts[thread_id], self._thread_streams[thread_id]
+        return self._thread_contexts[thread_id], self._thread_streams[thread_id], self._thread_buffers[thread_id]
 
     def _load_class_names(self):
         """Loads class names from a file named class_names.txt in the same directory as the engine."""
@@ -198,25 +218,30 @@ class TRTDetector:
             print(f"[ERROR] Preprocessing failed: {e}")
             return []
         
-        # CRITICAL: Get thread-specific execution context and CUDA stream
-        # Both TensorRT execution context and CUDA stream are NOT thread-safe
-        # Each thread needs its own context and stream
-        context, stream = self._get_context_and_stream()
+        # CRITICAL: Get thread-specific execution context, CUDA stream, and buffers
+        # All of these must be per-thread because:
+        # - TensorRT execution context is NOT thread-safe
+        # - CUDA stream is NOT thread-safe
+        # - CUDA device memory buffers are only valid within the same CUDA context
+        context, stream, buffers = self._get_context_and_stream()
+        inputs = buffers['inputs']
+        outputs = buffers['outputs']
+        bindings = buffers['bindings']
         
         # CRITICAL: Serialize CUDA operations with lock to avoid multi-threading issues
         # CUDA context is not thread-safe - all operations must be serialized
         with _cuda_lock:
-            # Copy input data to device using thread-specific stream
+            # Copy input data to device using thread-specific stream and buffers
             try:
-                np.copyto(self.inputs[0]['host'], input_image.ravel())
-                cuda.memcpy_htod_async(self.inputs[0]['device'], self.inputs[0]['host'], stream)
+                np.copyto(inputs[0]['host'], input_image.ravel())
+                cuda.memcpy_htod_async(inputs[0]['device'], inputs[0]['host'], stream)
             except Exception as e:
                 print(f"[ERROR] Failed to copy input to device: {e}")
                 return []
 
-            # Run inference using thread-specific context and stream
+            # Run inference using thread-specific context, stream, and bindings
             try:
-                success = context.execute_async_v2(bindings=self.bindings, stream_handle=stream.handle)
+                success = context.execute_async_v2(bindings=bindings, stream_handle=stream.handle)
                 if not success:
                     print("[ERROR] TensorRT inference execution returned False")
                     return []
@@ -225,20 +250,20 @@ class TRTDetector:
                 print("=" * 60)
                 print("[ERROR] TensorRT execution error detected!")
                 print("[ERROR] This usually means:")
-                print("  - CUDA context/stream conflict in multi-threaded environment")
+                print("  - CUDA context/stream/buffer conflict in multi-threaded environment")
                 print("  - Or engine was built on a different device")
                 print("=" * 60)
                 print("[INFO] If test_with_images.py works but GUI doesn't:")
-                print("  - This is a CUDA threading issue - using per-thread context and stream")
+                print("  - This is a CUDA threading issue - using per-thread context, stream, and buffers")
                 print("[INFO] If both fail, rebuild engine:")
                 print("  cd shipping")
                 print("  ./rebuild_engine.sh")
                 print("=" * 60)
                 return []
 
-            # Copy output data from device using thread-specific stream
+            # Copy output data from device using thread-specific stream and buffers
             try:
-                cuda.memcpy_dtoh_async(self.outputs[0]['host'], self.outputs[0]['device'], stream)
+                cuda.memcpy_dtoh_async(outputs[0]['host'], outputs[0]['device'], stream)
                 stream.synchronize()
             except Exception as e:
                 print(f"[ERROR] Failed to copy output from device: {e}")
@@ -246,7 +271,7 @@ class TRTDetector:
 
         # Postprocess
         # Use the actual output shape from the engine instead of assuming
-        output_data = self.outputs[0]['host'].reshape(self.output_shape)
+        output_data = outputs[0]['host'].reshape(self.output_shape)
         
         # Debug: Print output shape
         print(f"[DEBUG] Raw output shape: {output_data.shape}")
