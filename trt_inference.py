@@ -110,62 +110,75 @@ class TRTDetector:
 
     def _postprocess(self, output, ratio, dwdh):
         """
-        Post-processes the raw output from the YOLOv8 model.
-        This version includes refined NMS logic for better filtering.
+        Post-processes the raw output from the YOLOv8 model with correct logic.
         """
-        output = np.squeeze(output)
+        # The output from the model is of shape (batch_size, num_classes + 4, num_predictions)
+        # We squeeze and transpose it to (num_predictions, num_classes + 4)
+        output = np.squeeze(output).T
 
-        # Filter out detections with a low "objectness" score
-        conf_threshold = 0.25  # This is the initial confidence threshold
-        output = output[output[:, 4] > conf_threshold]
+        # In this model format, the score is the max of the class probabilities.
+        conf_threshold = 0.25
+        
+        # Get the class probabilities (all columns from index 4 onwards)
+        class_probs = output[:, 4:]
+        # Find the maximum score for each prediction
+        max_scores = np.max(class_probs, axis=1)
 
-        boxes = []
-        scores = []
-        class_ids = []
+        # Filter out all predictions with a confidence score below the threshold
+        mask = max_scores > conf_threshold
+        output = output[mask]
+        max_scores = max_scores[mask]
 
-        for row in output:
-            # For each detection, the format is:
-            # [cx, cy, w, h, obj_conf, class_prob_1, class_prob_2, ...]
-            obj_conf = row[4]
-            class_probs = row[5:]
-            class_id = np.argmax(class_probs)
-            class_conf = class_probs[class_id]
-            
-            # The final confidence score is a product of objectness and class probability
-            final_conf = obj_conf * class_conf
+        if output.shape[0] == 0:
+            return []
 
-            # We perform a second filter based on this more accurate final confidence
-            if final_conf < conf_threshold:
-                continue
+        # Get the corresponding class IDs for the filtered predictions
+        class_ids = np.argmax(output[:, 4:], axis=1)
 
-            scores.append(float(final_conf)) # Use final confidence for NMS
-            class_ids.append(int(class_id))
+        # Extract box coordinates and rescale them to the original image space
+        boxes_raw = output[:, :4]
+        boxes_rescaled = self.rescale_boxes(boxes_raw, ratio, dwdh)
 
-            # Rescale box coordinates from the letterboxed image space back to the original image space
-            xc, yc, w, h = row[:4]
-            x1 = (xc - w / 2 - dwdh[0]) / ratio
-            y1 = (yc - h / 2 - dwdh[1]) / ratio
-            width = w / ratio
-            height = h / ratio
-            
-            # The box format required by cv2.dnn.NMSBoxes is (x_top_left, y_top_left, width, height)
-            boxes.append([int(x1), int(y1), int(width), int(height)])
+        # Convert boxes to the format required by NMS: (x_top_left, y_top_left, width, height)
+        boxes_for_nms = []
+        for box in boxes_rescaled:
+            x1, y1, x2, y2 = box
+            width = x2 - x1
+            height = y2 - y1
+            boxes_for_nms.append([int(x1), int(y1), int(width), int(height)])
 
         # Apply Non-Maximum Suppression
-        nms_threshold = 0.5  # IoU threshold for NMS
-        indices = cv2.dnn.NMSBoxes(boxes, scores, conf_threshold, nms_threshold)
+        nms_threshold = 0.5
+        indices = cv2.dnn.NMSBoxes(boxes_for_nms, max_scores.tolist(), conf_threshold, nms_threshold)
         
         detections = []
         if len(indices) > 0:
             for i in indices.flatten():
-                # Get the box coordinates after NMS
-                x, y, w, h = boxes[i]
-                final_box = [x, y, x + w, y + h] # Convert back to (x1, y1, x2, y2) for drawing
+                # Get the final box in (x1, y1, x2, y2) format
+                x, y, w, h = boxes_for_nms[i]
+                final_box = [x, y, x + w, y + h]
 
                 detections.append({
                     'box': final_box,
-                    'confidence': scores[i],
+                    'confidence': max_scores[i],
                     'class_name': self.class_names[class_ids[i]]
                 })
         
         return detections
+
+    def rescale_boxes(self, boxes, ratio, dwdh):
+        """Helper function to rescale letterboxed boxes to original image space."""
+        dw, dh = dwdh
+        # Rescale centers and dimensions
+        boxes[:, 0] = (boxes[:, 0] - dw) / ratio
+        boxes[:, 1] = (boxes[:, 1] - dh) / ratio
+        boxes[:, 2] = boxes[:, 2] / ratio
+        boxes[:, 3] = boxes[:, 3] / ratio
+        
+        # Convert from (center_x, center_y, width, height) to (x1, y1, x2, y2)
+        x1 = boxes[:, 0] - boxes[:, 2] / 2
+        y1 = boxes[:, 1] - boxes[:, 3] / 2
+        x2 = boxes[:, 0] + boxes[:, 2] / 2
+        y2 = boxes[:, 1] + boxes[:, 3] / 2
+        
+        return np.stack([x1, y1, x2, y2], axis=1)
