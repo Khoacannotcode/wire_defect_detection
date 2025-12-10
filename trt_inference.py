@@ -335,10 +335,29 @@ class TRTDetector:
         return detections
 
     def _preprocess(self, img):
+        """
+        Preprocess image for TensorRT inference.
+        
+        Args:
+            img: Input image (numpy array, 3-channel grayscale format - already converted at capture/load level)
+        
+        Returns:
+            (preprocessed_image, ratio, (dw, dh))
+        """
         input_w, input_h = self.input_shape[3], self.input_shape[2]
+        
+        # Input is expected to be 3-channel grayscale (converted at capture/load level)
+        # No channel conversion needed here
+        if len(img.shape) == 2:
+            # Fallback: if somehow 2D input received, convert to 3-channel
+            img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif len(img.shape) == 3 and img.shape[2] != 3:
+            # Fallback: unexpected channel count
+            raise ValueError(f"Expected 3-channel input, got {img.shape[2]} channels")
+        
         img_h, img_w, _ = img.shape
 
-        # Letterbox
+        # Letterbox resize to 416x256 maintaining aspect ratio
         r = min(input_w / img_w, input_h / img_h)
         new_unpad = (int(round(img_w * r)), int(round(img_h * r)))
         dw, dh = (input_w - new_unpad[0]) / 2, (input_h - new_unpad[1]) / 2

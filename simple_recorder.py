@@ -57,7 +57,7 @@ out = cv2.VideoWriter(output_filename, fourcc, 30.0, (1280, 80))  # recording cr
 frame_height = 720
 strip_height = 80
 y_top = (frame_height - strip_height) // 2
-y_bottom = y_top + strip_height
+y_bottom = y_top + strip_height 
 
 record_seconds = 60
 start_time = time.time()

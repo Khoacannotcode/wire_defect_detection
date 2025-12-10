@@ -395,7 +395,7 @@ class LiveWireDetector:
         Detect defects in a frame with visualization.
         
         Args:
-            frame: Input frame (numpy array)
+            frame: Input frame (numpy array, BGR format)
         
         Returns:
             (annotated_frame, detections, processing_time)
@@ -404,6 +404,12 @@ class LiveWireDetector:
             - processing_time: Time taken for detection in seconds
         """
         start_time = time.perf_counter()
+        
+        # Convert frame to grayscale 3-channel (model expects 3-channel grayscale)
+        # This ensures entire pipeline uses 3-channel grayscale format
+        if len(frame.shape) == 3 and frame.shape[2] == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         
         # Crop to ROI for detection (768x720 - full height, width crop only)
         cropped_frame, roi_info = self.crop_to_roi_for_detection(frame)
@@ -550,8 +556,16 @@ def main():
             print("[INFO] End of video stream or camera disconnected.")
             break
 
-        # Run detection
-        detections = detector.detect(frame)
+        # Convert frame to grayscale 3-channel (model expects 3-channel grayscale)
+        # This ensures entire pipeline uses 3-channel grayscale format
+        if len(frame.shape) == 3 and frame.shape[2] == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame_gray_3ch = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        else:
+            frame_gray_3ch = frame
+
+        # Run detection on grayscale 3-channel frame
+        detections = detector.detect(frame_gray_3ch)
 
         # Calculate FPS
         fps_frame_count += 1

@@ -94,7 +94,7 @@ class DetectionGUI:
     def load_config(self):
         """Load configuration from config.json"""
         default_config = {
-            'model_path': str(MODELS_DIR / 'best_cropped.onnx'),
+            'model_path': str(MODELS_DIR / 'best_v3_416x256.onnx'),
             'camera_source': '0',
             'camera_width': 1280,
             'camera_height': 720,
@@ -131,7 +131,7 @@ class DetectionGUI:
     
     def init_detector(self):
         """Initialize LiveWireDetector"""
-        model_path = Path(self.config.get('model_path', str(MODELS_DIR / 'best_cropped.onnx')))
+        model_path = Path(self.config.get('model_path', str(MODELS_DIR / 'best_v3_416x256.onnx')))
         
         if not model_path.exists():
             messagebox.showerror("Error", "Model not found: {}".format(model_path))

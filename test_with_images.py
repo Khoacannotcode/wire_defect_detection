@@ -79,8 +79,19 @@ def main():
             print("  [WARN] Could not read image.")
             continue
 
+        # Convert to grayscale 3-channel (model expects 3-channel grayscale format)
+        # This ensures entire pipeline uses 3-channel grayscale format
+        if len(frame.shape) == 3 and frame.shape[2] == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            frame_gray_3ch = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        elif len(frame.shape) == 2:
+            # Already grayscale, convert to 3-channel
+            frame_gray_3ch = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        else:
+            frame_gray_3ch = frame
+
         start_time = time.perf_counter()
-        detections = detector.detect(frame)
+        detections = detector.detect(frame_gray_3ch)
         end_time = time.perf_counter()
         
         inference_time = (end_time - start_time) * 1000
