@@ -242,6 +242,38 @@ class DetectionGUI:
         control_frame = ttk.LabelFrame(main_frame, text="Control Panel", padding="5")
         control_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
         
+        # Session Alarm Frame (separate frame above session controls)
+        alarm_section_frame = ttk.LabelFrame(control_frame, text="Session Alarm", padding="5")
+        alarm_section_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        # Header frame with "View Rule" button
+        alarm_header_frame = ttk.Frame(alarm_section_frame)
+        alarm_header_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        # "View Rule" label with hover effect
+        self.alarm_view_rule_label = ttk.Label(alarm_header_frame, text="ℹ View Rule", 
+                                               foreground="blue", cursor="hand2",
+                                               font=("Arial", 8, "underline"))
+        self.alarm_view_rule_label.pack(side=tk.RIGHT, padx=5)
+        
+        # Bind hover events for highlight effect
+        self.alarm_view_rule_label.bind("<Enter>", self._on_alarm_view_rule_enter)
+        self.alarm_view_rule_label.bind("<Leave>", self._on_alarm_view_rule_leave)
+        self.alarm_view_rule_label.bind("<Button-1>", self._show_alarm_rule)
+        
+        # Alarm content frame
+        alarm_content_frame = ttk.Frame(alarm_section_frame)
+        alarm_content_frame.pack(fill=tk.X)
+        
+        # Alarm icon with animation (using "!" instead of emoji for Python 3.6 compatibility)
+        self.alarm_icon_label = ttk.Label(alarm_content_frame, text="!", font=("Arial", 20, "bold"))
+        self.alarm_icon_label.pack(side=tk.LEFT, padx=2)
+        
+        # Alarm description (only shown when alarm is active)
+        self.alarm_text_label = ttk.Label(alarm_content_frame, text="", 
+                                          foreground="red", font=("Arial", 9, "bold"))
+        self.alarm_text_label.pack(side=tk.LEFT, padx=5)
+        
         # Session controls
         session_frame = ttk.Frame(control_frame)
         session_frame.pack(fill=tk.X, pady=(0, 5))
@@ -262,19 +294,6 @@ class DetectionGUI:
         self.session_duration_label = ttk.Label(session_frame, text="Duration: 0s", 
                                                 foreground="gray", font=("Arial", 9))
         self.session_duration_label.pack(side=tk.LEFT, padx=10)
-        
-        # Session Alarm Frame (separate frame below session timer)
-        alarm_frame = ttk.Frame(session_frame)
-        alarm_frame.pack(side=tk.LEFT, padx=10)
-        
-        # Alarm icon with animation (using "!" instead of emoji for Python 3.6 compatibility)
-        self.alarm_icon_label = ttk.Label(alarm_frame, text="!", font=("Arial", 20, "bold"))
-        self.alarm_icon_label.pack(side=tk.LEFT, padx=2)
-        
-        # Alarm description (only shown when alarm is active)
-        self.alarm_text_label = ttk.Label(alarm_frame, text="", 
-                                          foreground="red", font=("Arial", 9, "bold"))
-        self.alarm_text_label.pack(side=tk.LEFT, padx=5)
         
         # Store session start time for duration calculation
         self.session_start_time = None
@@ -1124,6 +1143,14 @@ class DetectionGUI:
         """Reset highlight when leaving View Rule"""
         self.view_rule_label.config(foreground="blue", font=("Arial", 8, "underline"))
     
+    def _on_alarm_view_rule_enter(self, event):
+        """Highlight effect when hovering over Alarm View Rule"""
+        self.alarm_view_rule_label.config(foreground="darkblue", font=("Arial", 8, "bold", "underline"))
+    
+    def _on_alarm_view_rule_leave(self, event):
+        """Reset highlight when leaving Alarm View Rule"""
+        self.alarm_view_rule_label.config(foreground="blue", font=("Arial", 8, "underline"))
+    
     def _show_session_timer_rule(self, event):
         """Show popup window with session timer rule explanation"""
         rule_text = """Session Timer Rule
@@ -1150,6 +1177,89 @@ The session timer measures the duration from the first stripe appearance to the 
         popup = tk.Toplevel(self.root)
         popup.title("Session Timer Rule")
         popup.geometry("500x400")
+        popup.resizable(False, False)
+        
+        # Make popup modal (focus on it)
+        popup.transient(self.root)
+        
+        # CRITICAL: Update window first to make it viewable before grab_set()
+        popup.update_idletasks()
+        
+        # Center popup on screen
+        x = (popup.winfo_screenwidth() // 2) - (popup.winfo_width() // 2)
+        y = (popup.winfo_screenheight() // 2) - (popup.winfo_height() // 2)
+        popup.geometry(f"+{x}+{y}")
+        
+        # Update again after centering, then set grab
+        popup.update_idletasks()
+        popup.grab_set()
+        
+        # Create text widget with scrollbar
+        text_frame = ttk.Frame(popup, padding="10")
+        text_frame.pack(fill=tk.BOTH, expand=True)
+        
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, font=("Arial", 10),
+                             padx=10, pady=10, relief=tk.FLAT, bg="#f5f5f5")
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text_widget.config(yscrollcommand=scrollbar.set)
+        
+        # Insert rule text
+        text_widget.insert("1.0", rule_text)
+        text_widget.config(state=tk.DISABLED)  # Make read-only
+        
+        # Close button
+        button_frame = ttk.Frame(popup, padding="10")
+        button_frame.pack(fill=tk.X)
+        
+        close_btn = ttk.Button(button_frame, text="Close", command=popup.destroy)
+        close_btn.pack()
+        
+        # Focus on close button
+        close_btn.focus_set()
+        popup.bind("<Return>", lambda e: popup.destroy())
+        popup.bind("<Escape>", lambda e: popup.destroy())
+    
+    def _show_alarm_rule(self, event):
+        """Show popup window with session alarm rule explanation"""
+        rule_text = """Session Alarm Rules
+
+The session alarm triggers visual alerts when critical defect conditions are detected during an active session.
+
+• Activation: Alarm only works when session timer is active (session started)
+
+• Alarm Conditions:
+
+  Damage:
+  - Triggers when 1 or more damage defects appear in a cluster
+  - Cluster duration must exceed 0.2 seconds
+  - Example: 1 damage defect detected for >0.2s → ALARM
+
+  Shift/Drop/Break:
+  - Triggers when total 5 or more defects (any combination) from these classes appear in a cluster
+  - Cluster duration must exceed 0.5 seconds
+  - Example: 3 shift + 2 breaks = 5 total defects for >0.5s → ALARM
+
+• Alarm Behavior:
+  - Alarm appears immediately when conditions are met
+  - Alarm clears immediately when conditions are no longer met
+  - Icon animates (size/color changes) when alarm is active
+  - Alarm message shows which condition triggered
+
+• Exclusions:
+  - NOK class defects are not counted in alarm conditions
+  - Normal class detections do not trigger alarms
+  - Only defect classes (damage, shift, drops, breaks) are considered
+
+• Purpose:
+  Provides real-time critical defect notifications to help operators respond quickly to quality issues."""
+        
+        # Create popup window
+        popup = tk.Toplevel(self.root)
+        popup.title("Session Alarm Rules")
+        popup.geometry("600x450")
         popup.resizable(False, False)
         
         # Make popup modal (focus on it)
