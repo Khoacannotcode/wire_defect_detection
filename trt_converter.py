@@ -16,12 +16,12 @@ from pathlib import Path
 # /some_path/
 # ├── trt_converter.py  (this script)
 # └── models/
-#     ├── best_cropped.onnx
-#     └── best_cropped.engine (will be created)
+#     ├── best_v3_416x256.onnx
+#     └── best_v3_416x256.engine (will be created)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-ONNX_MODEL_PATH = SCRIPT_DIR / "models" / "best_cropped.onnx"
-ENGINE_PATH = SCRIPT_DIR / "models" / "best_cropped.engine"
+ONNX_MODEL_PATH = SCRIPT_DIR / "models" / "best_v3_416x256.onnx"
+ENGINE_PATH = SCRIPT_DIR / "models" / "best_v3_416x256.engine"
 
 # Logger for TensorRT warnings, errors, and info
 TRT_LOGGER = trt.Logger(trt.Logger.WARNING)

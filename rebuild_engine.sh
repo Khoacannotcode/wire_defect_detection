@@ -14,8 +14,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 cd "$SCRIPT_DIR"
 
 MODELS_DIR="$SCRIPT_DIR/models"
-ONNX_PATH="$MODELS_DIR/best_cropped.onnx"
-ENGINE_PATH="$MODELS_DIR/best_cropped.engine"
+ONNX_PATH="$MODELS_DIR/best_v3_416x256.onnx"
+ENGINE_PATH="$MODELS_DIR/best_v3_416x256.engine"
 
 echo "=============================================================="
 echo "Rebuild TensorRT Engine"
