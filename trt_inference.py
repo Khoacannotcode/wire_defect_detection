@@ -420,9 +420,8 @@ class TRTDetector:
             print("[WARNING] Using min({}, {}) = {} classes".format(num_classes, len(self.class_names), min(num_classes, len(self.class_names))))
             num_classes = min(num_classes, len(self.class_names))
 
-        # Filter out predictions with confidence lower than threshold.
-        # In this format, the confidence score of a prediction is the highest score
-        # among its class probabilities.
+        # Filter by confidence - check each class separately (like Ultralytics)
+        # This matches ONNX implementation behavior
         conf_threshold = 0.25
         
         # Get the scores for all classes for all predictions.
@@ -430,23 +429,26 @@ class TRTDetector:
         print("[DEBUG] Class probabilities shape: {}".format(class_probs.shape))
         print("[DEBUG] Class probabilities min/max: {:.4f} / {:.4f}".format(class_probs.min(), class_probs.max()))
         
-        # Get the max score for each prediction.
+        # Get max score per prediction
         max_scores = np.max(class_probs, axis=1)
-        print("[DEBUG] Max scores shape: {}".format(max_scores.shape))
-        print("[DEBUG] Max scores min/max: {:.4f} / {:.4f}".format(max_scores.min(), max_scores.max()))
-        print("[DEBUG] Predictions above threshold: {}".format(np.sum(max_scores > conf_threshold)))
         
-        # Filter all predictions with a score lower than the threshold.
-        mask = max_scores > conf_threshold
+        # Get class IDs for all predictions
+        class_ids = np.argmax(class_probs, axis=1)
+        
+        # Filter: keep predictions where the selected class probability > threshold
+        # This matches Ultralytics behavior: check the class-specific probability, not just max
+        selected_class_probs = class_probs[np.arange(len(class_probs)), class_ids]
+        mask = selected_class_probs > conf_threshold
+        
         predictions = predictions[mask]
-        max_scores = max_scores[mask]
+        max_scores = selected_class_probs[mask]
+        class_ids = class_ids[mask]
+        
+        print("[DEBUG] Predictions above threshold: {}".format(len(predictions)))
 
         if predictions.shape[0] == 0:
             print("[DEBUG] No predictions above confidence threshold")
             return []
-
-        # Get the class IDs for the filtered predictions.
-        class_ids = np.argmax(predictions[:, 4:4+num_classes], axis=1)
         print("[DEBUG] Class IDs shape: {}".format(class_ids.shape))
         print("[DEBUG] Class IDs min/max: {} / {}".format(class_ids.min(), class_ids.max()))
         print("[DEBUG] Class IDs sample: {}".format(class_ids[:10] if len(class_ids) >= 10 else class_ids))
@@ -470,34 +472,60 @@ class TRTDetector:
         boxes_raw = predictions[:, :4]
         boxes_rescaled = self.rescale_boxes(boxes_raw, ratio, dwdh)
 
-        # Apply Non-Maximum Suppression to filter out overlapping boxes.
+        # Apply class-specific NMS (like Ultralytics with agnostic_nms=False)
+        # This matches ONNX implementation behavior
         nms_threshold = 0.5
-        # Convert boxes_rescaled (x1, y1, x2, y2) to (x, y, width, height) for NMSBoxes
-        boxes_for_nms = []
-        for box in boxes_rescaled:
-            x1, y1, x2, y2 = box
-            boxes_for_nms.append([int(x1), int(y1), int(x2 - x1), int(y2 - y1)])
+        all_indices = []
         
-        indices = cv2.dnn.NMSBoxes(boxes_for_nms, max_scores.tolist(), conf_threshold, nms_threshold)
+        for cls_id in range(num_classes):
+            # Get predictions for this class
+            cls_mask = class_ids == cls_id
+            if np.sum(cls_mask) == 0:
+                continue
+            
+            cls_boxes = boxes_rescaled[cls_mask]
+            cls_scores = max_scores[cls_mask]
+            cls_indices_original = np.where(cls_mask)[0]
+            
+            # Convert to (x, y, width, height) format for NMSBoxes
+            boxes_for_nms = []
+            for box in cls_boxes:
+                x1, y1, x2, y2 = box
+                boxes_for_nms.append([int(x1), int(y1), int(x2 - x1), int(y2 - y1)])
+            
+            # Apply NMS for this class
+            cls_nms_indices = cv2.dnn.NMSBoxes(boxes_for_nms, cls_scores.tolist(), conf_threshold, nms_threshold)
+            
+            if len(cls_nms_indices) > 0:
+                # Map back to original indices
+                for idx in cls_nms_indices.flatten():
+                    all_indices.append(cls_indices_original[idx])
         
-        print("[DEBUG] NMS indices: {}".format(indices))
-        print("[DEBUG] Number of detections after NMS: {}".format(len(indices) if len(indices) > 0 else 0))
+        # Sort by confidence (highest first)
+        if len(all_indices) > 0:
+            all_indices = np.array(all_indices)
+            all_scores = max_scores[all_indices]
+            sorted_order = np.argsort(all_scores)[::-1]
+            all_indices = all_indices[sorted_order]
+        
+        print("[DEBUG] Number of detections after NMS: {}".format(len(all_indices)))
         
         detections = []
-        if len(indices) > 0:
-            for i in indices.flatten():
-                # Validate class_id before accessing class_names
-                if class_ids[i] >= len(self.class_names) or class_ids[i] < 0:
-                    print("[ERROR] Invalid class_id {} at index {}, skipping".format(class_ids[i], i))
-                    continue
-                    
-                # Get the final box in (x1, y1, x2, y2) format
-                x1, y1, x2, y2 = boxes_rescaled[i]
-                detections.append({
-                    'box': [int(x1), int(y1), int(x2), int(y2)],
-                    'confidence': float(max_scores[i]),
-                    'class_name': self.class_names[class_ids[i]]
-                })
+        for i in all_indices:
+            # Validate class_id before accessing class_names
+            if class_ids[i] >= len(self.class_names) or class_ids[i] < 0:
+                print("[ERROR] Invalid class_id {} at index {}, skipping".format(class_ids[i], i))
+                continue
+                
+            # Get the final box in (x1, y1, x2, y2) format
+            x1, y1, x2, y2 = boxes_rescaled[i]
+            
+            # Keep float precision (like ONNX implementation) - don't round to int
+            detections.append({
+                'box': [float(x1), float(y1), float(x2), float(y2)],
+                'confidence': float(max_scores[i]),
+                'class_name': self.class_names[class_ids[i]]
+            })
         
         print("[DEBUG] Final detections: {}".format(len(detections)))
         return detections

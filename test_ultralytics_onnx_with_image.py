@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Test TensorRT engine inference on images
-Uses TRTDetector for inference - matches Jetson deployment
-This helps identify differences between ONNX and TensorRT inference
+Test ONNX model inference using Ultralytics YOLO
+Compare with custom ONNX Runtime implementation
 """
 import cv2
 from pathlib import Path
 import time
 import json
 import numpy as np
-from trt_inference import TRTDetector
+from ultralytics import YOLO
 from visualization_standards import draw_multiple_bboxes
 
 # --- Configuration ---
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODEL_CONFIG_PATH = SCRIPT_DIR / "model_config.json"
 TEST_IMAGES_DIR = SCRIPT_DIR / "test_images"
-OUTPUT_DIR = SCRIPT_DIR / "test_results" / "trt"
+OUTPUT_DIR = SCRIPT_DIR / "test_results" / "ultralytics_onnx"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 def load_model_config():
@@ -29,11 +28,11 @@ def load_model_config():
         config = json.load(f)
     
     # Resolve relative paths
-    engine_path = SCRIPT_DIR / config['tensorrt_engine_path']
+    onnx_path = SCRIPT_DIR / config['onnx_model_path']
     class_names_path = SCRIPT_DIR / config['class_names_path']
     
     return {
-        'engine_path': engine_path,
+        'onnx_path': onnx_path,
         'class_names_path': class_names_path
     }
 
@@ -48,7 +47,7 @@ def load_class_names(file_path):
 
 def main():
     print("=" * 60)
-    print("[TEST] Wire Defect Detection - TensorRT Image Testing")
+    print("[TEST] Wire Defect Detection - Ultralytics ONNX Testing")
     print("=" * 60)
 
     # Load config
@@ -58,22 +57,17 @@ def main():
         print(f"[ERROR] Failed to load config: {e}")
         return
     
-    engine_path = config['engine_path']
+    onnx_path = config['onnx_path']
     class_names_path = config['class_names_path']
     
-    if not engine_path.exists():
-        print(f"[ERROR] TensorRT engine not found: {engine_path}")
-        print(f"[INFO] Please build engine first using trt_converter.py or rebuild_engine.sh")
+    if not onnx_path.exists():
+        print(f"[ERROR] ONNX model not found: {onnx_path}")
         return
     
-    # Initialize TensorRT detector
-    print(f"[INFO] Loading TensorRT engine: {engine_path}")
-    try:
-        detector = TRTDetector(str(engine_path))
-        print("[OK] TensorRT Detector initialized successfully")
-    except Exception as e:
-        print(f"[ERROR] Failed to initialize detector: {e}")
-        return
+    # Load ONNX model using Ultralytics YOLO
+    print(f"[INFO] Loading ONNX model with Ultralytics: {onnx_path}")
+    model = YOLO(str(onnx_path))
+    print("[OK] ONNX model loaded successfully")
     
     # Load class names
     class_names = load_class_names(class_names_path)
@@ -90,6 +84,7 @@ def main():
     # Process each image
     total_time = 0
     total_detections = 0
+    all_detections = []  # Store all detections for comparison
 
     for image_path in image_files:
         print(f"\n--- Processing: {image_path.name} ---")
@@ -107,21 +102,54 @@ def main():
         else:
             frame_gray_3ch = frame
 
-        # Run inference using TRTDetector
+        # Run inference using Ultralytics YOLO.predict()
         start_time = time.perf_counter()
-        detections = detector.detect(frame_gray_3ch)
+        results = model.predict(
+            source=frame_gray_3ch,
+            imgsz=[416, 256],  # Rectangular input matching training
+            conf=0.25,
+            verbose=False
+        )
         end_time = time.perf_counter()
         
         inference_time = (end_time - start_time) * 1000
         total_time += inference_time
-        total_detections += len(detections)
+        
+        result = results[0]
+        boxes = result.boxes
+        num_detections = len(boxes) if boxes is not None else 0
+        total_detections += num_detections
+
+        # Store detections for comparison
+        image_detections = []
+        if boxes is not None:
+            for box in boxes:
+                # Get box coordinates (xyxy format)
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                confidence = float(box.conf[0].cpu().numpy())
+                class_id = int(box.cls[0].cpu().numpy())
+                class_name = class_names[class_id] if class_id < len(class_names) else f'class_{class_id}'
+                
+                image_detections.append({
+                    'box': [float(x1), float(y1), float(x2), float(y2)],
+                    'confidence': confidence,
+                    'class_name': class_name,
+                    'class_id': class_id
+                })
+        
+        all_detections.append({
+            'image': image_path.name,
+            'detections': image_detections,
+            'count': num_detections
+        })
 
         print(f"  Inference time: {inference_time:.2f} ms")
-        print(f"  Found {len(detections)} detections")
+        print(f"  Found {num_detections} detections")
 
         # Draw detections using visualization standards
+        annotated = frame.copy()
         bboxes_info = []
-        for det in detections:
+        for det in image_detections:
             box = det['box']
             label = "{}: {:.2f}".format(det['class_name'], det['confidence'])
             bboxes_info.append({
@@ -133,12 +161,12 @@ def main():
                 'label': label
             })
         
-        # Draw all bboxes with standards (fill overlay + border + labels)
-        frame = draw_multiple_bboxes(frame, bboxes_info)
+        # Draw all bboxes with standards
+        annotated = draw_multiple_bboxes(annotated, bboxes_info)
         
         # Save the output image
         output_path = OUTPUT_DIR / image_path.name
-        cv2.imwrite(str(output_path), frame)
+        cv2.imwrite(str(output_path), annotated)
         print(f"  Saved result to: {output_path}")
 
     # Print summary
@@ -149,13 +177,19 @@ def main():
     avg_time = total_time / len(image_files)
     avg_fps = 1000 / avg_time if avg_time > 0 else 0
     print("\n" + "=" * 60)
-    print("[SUMMARY] TensorRT Test Complete")
+    print("[SUMMARY] Ultralytics ONNX Test Complete")
     print("=" * 60)
     print(f"Images tested: {len(image_files)}")
     print(f"Total detections: {total_detections}")
     print(f"Average inference time: {avg_time:.2f} ms")
     print(f"Average FPS: {avg_fps:.2f}")
     print(f"Output directory: {OUTPUT_DIR}")
+    
+    # Save detections to JSON for comparison
+    comparison_file = OUTPUT_DIR / "detections.json"
+    with open(comparison_file, 'w') as f:
+        json.dump(all_detections, f, indent=2)
+    print(f"Detections saved to: {comparison_file}")
 
 if __name__ == "__main__":
     main()

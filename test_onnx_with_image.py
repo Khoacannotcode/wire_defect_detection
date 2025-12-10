@@ -2,15 +2,16 @@
 # -*- coding: utf-8 -*-
 """
 Test ONNX model inference on images
-Uses Ultralytics YOLO to load ONNX model and run inference
-This matches the verification process in learning_based/runs/.../onnx_verification
+Uses custom ONNX Runtime implementation matching TensorRT preprocessing
+This allows comparison between ONNX and TensorRT inference on same preprocessing
 """
 import cv2
 from pathlib import Path
 import time
 import json
 import numpy as np
-from ultralytics import YOLO
+from onnx_inference import ONNXDetector
+from visualization_standards import draw_multiple_bboxes
 
 # --- Configuration ---
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -64,15 +65,10 @@ def main():
         print(f"[ERROR] ONNX model not found: {onnx_path}")
         return
     
-    # Load ONNX model using Ultralytics YOLO
+    # Load ONNX model using custom ONNX Runtime implementation
     print(f"[INFO] Loading ONNX model: {onnx_path}")
-    model = YOLO(str(onnx_path))
+    detector = ONNXDetector(str(onnx_path), str(class_names_path))
     print("[OK] ONNX model loaded successfully")
-    
-    # Load class names
-    class_names = load_class_names(class_names_path)
-    if class_names:
-        print(f"[INFO] Loaded {len(class_names)} class names")
     
     # Find test images
     image_files = sorted(list(TEST_IMAGES_DIR.glob("*.jpg")))
@@ -84,6 +80,7 @@ def main():
     # Process each image
     total_time = 0
     total_detections = 0
+    all_detections = []  # Store all detections for comparison
 
     for image_path in image_files:
         print(f"\n--- Processing: {image_path.name} ---")
@@ -101,29 +98,42 @@ def main():
         else:
             frame_gray_3ch = frame
 
-        # Run inference using YOLO.predict() - matches ONNX verification
+        # Run inference using custom ONNX Runtime implementation
         start_time = time.perf_counter()
-        results = model.predict(
-            source=frame_gray_3ch,
-            imgsz=[416, 256],  # Rectangular input matching training
-            conf=0.25,
-            verbose=False
-        )
+        detections = detector.detect(frame_gray_3ch)
         end_time = time.perf_counter()
         
         inference_time = (end_time - start_time) * 1000
         total_time += inference_time
-        
-        result = results[0]
-        boxes = result.boxes
-        num_detections = len(boxes) if boxes is not None else 0
-        total_detections += num_detections
+        total_detections += len(detections)
+
+        # Store detections for comparison
+        all_detections.append({
+            'image': image_path.name,
+            'detections': detections,
+            'count': len(detections)
+        })
 
         print(f"  Inference time: {inference_time:.2f} ms")
-        print(f"  Found {num_detections} detections")
+        print(f"  Found {len(detections)} detections")
 
-        # Draw detections
-        annotated = result.plot()
+        # Draw detections using visualization standards
+        annotated = frame.copy()
+        bboxes_info = []
+        for det in detections:
+            box = det['box']
+            label = "{}: {:.2f}".format(det['class_name'], det['confidence'])
+            bboxes_info.append({
+                'x1': int(box[0]),
+                'y1': int(box[1]),
+                'x2': int(box[2]),
+                'y2': int(box[3]),
+                'class_name': det['class_name'],
+                'label': label
+            })
+        
+        # Draw all bboxes with standards (fill overlay + border + labels)
+        annotated = draw_multiple_bboxes(annotated, bboxes_info)
         
         # Save the output image
         output_path = OUTPUT_DIR / image_path.name
@@ -145,6 +155,12 @@ def main():
     print(f"Average inference time: {avg_time:.2f} ms")
     print(f"Average FPS: {avg_fps:.2f}")
     print(f"Output directory: {OUTPUT_DIR}")
+    
+    # Save detections to JSON for comparison
+    comparison_file = OUTPUT_DIR / "detections.json"
+    with open(comparison_file, 'w') as f:
+        json.dump(all_detections, f, indent=2)
+    print(f"Detections saved to: {comparison_file}")
 
 if __name__ == "__main__":
     main()

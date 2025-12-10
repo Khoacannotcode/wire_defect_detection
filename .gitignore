@@ -52,5 +52,9 @@ Thumbs.db
 
 
 # Camera test images
+test_results/
 test_*.jpg
 test_*.png
+
+# Temporary files and debug scripts
+tmp/
