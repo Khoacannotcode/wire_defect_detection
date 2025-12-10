@@ -481,6 +481,28 @@ class DetectionGUI:
                               length=200, command=lambda val, name=class_name: self.on_threshold_change(name, val))
             slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
             
+            # Bind click event to jump slider to clicked position
+            def on_slider_click(event, scale=slider, name=class_name):
+                """Handle click on slider track - jump to clicked position"""
+                # Calculate value based on click position
+                # Get slider width and position
+                scale.update_idletasks()
+                scale_width = scale.winfo_width()
+                if scale_width <= 1:
+                    return  # Slider not yet sized
+                
+                # Get click position relative to slider
+                click_x = event.x
+                
+                # Calculate value: 0.0 at left edge, 1.0 at right edge
+                value = click_x / scale_width
+                value = max(0.0, min(1.0, value))  # Clamp to range
+                
+                # Set slider value (this will trigger command callback)
+                scale.set(value)
+            
+            slider.bind("<Button-1>", on_slider_click)
+            
             # Value label (shows current threshold)
             value_label = ttk.Label(slider_frame, text="0.25", width=6, anchor=tk.E)
             value_label.pack(side=tk.LEFT, padx=(5, 0))
