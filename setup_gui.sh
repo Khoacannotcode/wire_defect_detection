@@ -17,9 +17,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 cd "$SCRIPT_DIR"
 
 MODELS_DIR="$SCRIPT_DIR/models"
-ONNX_PATH="$MODELS_DIR/best_cropped.onnx"
-ENGINE_PATH="$MODELS_DIR/best_cropped.engine"
+MODEL_CONFIG="$SCRIPT_DIR/model_config.json"
 CLASS_NAMES_PATH="$MODELS_DIR/class_names.txt"
+
+# Load paths from model_config.json if available
+if [ -f "$MODEL_CONFIG" ]; then
+    ONNX_PATH=$(python3 -c "import json; print(json.load(open('$MODEL_CONFIG'))['onnx_model_path'])" 2>/dev/null | sed "s|^models/|$MODELS_DIR/|")
+    ENGINE_PATH=$(python3 -c "import json; print(json.load(open('$MODEL_CONFIG'))['tensorrt_engine_path'])" 2>/dev/null | sed "s|^models/|$MODELS_DIR/|")
+else
+    # Fallback to default paths
+    ONNX_PATH="$MODELS_DIR/best_v3_416x256.onnx"
+    ENGINE_PATH="$MODELS_DIR/best_v3_416x256.engine"
+    echo "[WARN] model_config.json not found, using default paths"
+fi
 
 echo "=============================================================="
 echo "GUI Setup - Wire Defect Detection"

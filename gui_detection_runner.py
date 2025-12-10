@@ -96,16 +96,21 @@ class DetectionGUI:
         # Load model paths from model_config.json
         model_config_path = ROOT_DIR / 'model_config.json'
         onnx_path = None
+        engine_path = None
         if model_config_path.exists():
             try:
                 with open(model_config_path, 'r') as f:
                     model_config = json.load(f)
                     onnx_path = str(ROOT_DIR / model_config['onnx_model_path'])
+                    engine_path = str(ROOT_DIR / model_config['tensorrt_engine_path'])
             except Exception as e:
                 print(f"[WARN] Failed to load model_config.json: {e}")
         
+        # Prefer engine path if available, otherwise use onnx path
+        default_model_path = engine_path or onnx_path or str(MODELS_DIR / 'best_v3_416x256.engine')
+        
         default_config = {
-            'model_path': onnx_path or str(MODELS_DIR / 'best_v3_416x256.onnx'),
+            'model_path': default_model_path,
             'camera_source': '0',
             'camera_width': 1280,
             'camera_height': 720,
@@ -142,7 +147,22 @@ class DetectionGUI:
     
     def init_detector(self):
         """Initialize LiveWireDetector"""
-        model_path = Path(self.config.get('model_path', str(MODELS_DIR / 'best_v3_416x256.onnx')))
+        # Load from model_config.json if available
+        model_config_path = ROOT_DIR / 'model_config.json'
+        default_model_path = str(MODELS_DIR / 'best_v3_416x256.engine')
+        if model_config_path.exists():
+            try:
+                with open(model_config_path, 'r') as f:
+                    model_config = json.load(f)
+                    # Prefer engine path, fallback to onnx path
+                    if 'tensorrt_engine_path' in model_config:
+                        default_model_path = str(ROOT_DIR / model_config['tensorrt_engine_path'])
+                    elif 'onnx_model_path' in model_config:
+                        default_model_path = str(ROOT_DIR / model_config['onnx_model_path'])
+            except Exception as e:
+                print(f"[WARN] Failed to load model_config.json: {e}")
+        
+        model_path = Path(self.config.get('model_path', default_model_path))
         
         if not model_path.exists():
             messagebox.showerror("Error", "Model not found: {}".format(model_path))
