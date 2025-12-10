@@ -72,6 +72,12 @@ class DefectLogger:
         self.active_cluster: Optional[DefectCluster] = None
         self.closed_clusters: List[DefectCluster] = []
         
+        # Stripe tracking (ANY detection - normal OR defect)
+        self.first_stripe_time = None      # Thời điểm stripe đầu tiên (normal hoặc defect)
+        self.first_stripe_frame = None
+        self.last_stripe_time = None       # Thời điểm stripe cuối cùng (normal hoặc defect)
+        self.last_stripe_frame = None
+        
         # Normal stripe tracking (for stripe timing)
         self.first_normal_frame = None
         self.first_normal_time = None
@@ -102,6 +108,13 @@ class DefectLogger:
         self.last_defect_frame = -1
         self.active_cluster = None
         self.closed_clusters = []
+        
+        # Reset stripe tracking
+        self.first_stripe_time = None
+        self.first_stripe_frame = None
+        self.last_stripe_time = None
+        self.last_stripe_frame = None
+        
         self.first_normal_frame = None
         self.first_normal_time = None
         self.last_normal_frame = None
@@ -153,6 +166,18 @@ class DefectLogger:
             det for det in detections 
             if det.get('class_name') == 'normal'
         ]
+        
+        # Track ANY stripe (normal OR defect) - for session duration
+        has_stripe = len(normal_detections) > 0 or len(defect_detections) > 0
+        if has_stripe:
+            # Track first stripe (bất kỳ loại nào)
+            if self.first_stripe_time is None:
+                self.first_stripe_time = timestamp
+                self.first_stripe_frame = frame_number
+            
+            # Update last stripe (mỗi khi có stripe)
+            self.last_stripe_time = timestamp
+            self.last_stripe_frame = frame_number
         
         # Track normal stripes (for stripe timing)
         if normal_detections:
@@ -209,6 +234,48 @@ class DefectLogger:
                     # Close cluster
                     self.closed_clusters.append(self.active_cluster)
                     self.active_cluster = None
+    
+    def get_stripe_duration(self) -> Optional[float]:
+        """
+        Get duration from first stripe to last stripe (or current time if session active)
+        
+        Returns:
+            Duration in seconds, or None if no stripes detected yet
+        """
+        if self.first_stripe_time is None:
+            return None
+        
+        # Nếu session đang active, dùng current time
+        if self.session_active:
+            return time.time() - self.first_stripe_time
+        
+        # Nếu session đã stop, dùng last_stripe_time
+        if self.last_stripe_time:
+            return self.last_stripe_time - self.first_stripe_time
+        
+        # Fallback: dùng first_stripe_time (nếu chưa có last_stripe_time)
+        return time.time() - self.first_stripe_time
+    
+    def get_stripe_timing_info(self) -> Optional[Dict]:
+        """
+        Get complete stripe timing information (first stripe to last stripe)
+        
+        Returns:
+            Dict with keys: start_time, end_time, duration, start_frame, end_frame
+            or None if no stripes detected
+        """
+        if self.first_stripe_time is None:
+            return None
+        
+        end_time = self.last_stripe_time if self.last_stripe_time else time.time()
+        
+        return {
+            'start_time': self.first_stripe_time,
+            'end_time': end_time,
+            'duration': end_time - self.first_stripe_time,
+            'start_frame': self.first_stripe_frame,
+            'end_frame': self.last_stripe_frame
+        }
     
     def get_stripe_timing(self) -> Optional[Dict]:
         """

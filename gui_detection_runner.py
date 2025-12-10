@@ -15,9 +15,11 @@ import numpy as np
 import threading
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 import sys
 import os
+import logging
 
 # Add parent directory to path for imports
 ROOT_DIR = Path(__file__).resolve().parent
@@ -31,6 +33,23 @@ from defect_logger import DefectLogger
 
 # Add system packages to path for compatibility
 sys.path.insert(0, '/usr/lib/python3/dist-packages')
+
+# Configure logging based on DEBUG environment variable
+DEBUG_MODE = os.getenv('DEBUG', '0') in ('1', 'true', 'True', 'TRUE')
+if DEBUG_MODE:
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='[%(levelname)s] %(message)s',
+        datefmt='%H:%M:%S'
+    )
+else:
+    logging.basicConfig(
+        level=logging.WARNING,  # Only WARNING and ERROR in production
+        format='[%(levelname)s] %(message)s',
+        datefmt='%H:%M:%S'
+    )
+
+logger = logging.getLogger(__name__)
 
 
 class DetectionGUI:
@@ -104,7 +123,7 @@ class DetectionGUI:
                     onnx_path = str(ROOT_DIR / model_config['onnx_model_path'])
                     engine_path = str(ROOT_DIR / model_config['tensorrt_engine_path'])
             except Exception as e:
-                print(f"[WARN] Failed to load model_config.json: {e}")
+                logger.warning(f"Failed to load model_config.json: {e}")
         
         # Prefer engine path if available, otherwise use onnx path
         default_model_path = engine_path or onnx_path or str(MODELS_DIR / 'best_v3_416x256.engine')
@@ -129,7 +148,7 @@ class DetectionGUI:
                     user_config.pop('model_path', None)
                     default_config.update(user_config)
             except Exception as e:
-                print("[WARN] Failed to load config.json: {}, using defaults".format(e))
+                logger.warning("Failed to load config.json: {}, using defaults".format(e))
         else:
             # Create default config file
             self.save_config(default_config)
@@ -151,7 +170,10 @@ class DetectionGUI:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config_to_save, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            print("[ERROR] Failed to save config.json: {}".format(e))
+            logger.error("Failed to save config.json: {}".format(e))
+            # Keep critical error print for production mode visibility
+            if not DEBUG_MODE:
+                print("[ERROR] Failed to save config.json: {}".format(e))
     
     def init_detector(self):
         """Initialize LiveWireDetector"""
@@ -168,7 +190,7 @@ class DetectionGUI:
                     elif 'onnx_model_path' in model_config:
                         default_model_path = str(ROOT_DIR / model_config['onnx_model_path'])
             except Exception as e:
-                print(f"[WARN] Failed to load model_config.json: {e}")
+                logger.warning(f"Failed to load model_config.json: {e}")
         
         model_path = Path(self.config.get('model_path', default_model_path))
         
@@ -178,13 +200,16 @@ class DetectionGUI:
         
         try:
             self.detector = LiveWireDetector(model_path)
-            print("[INFO] Detector initialized successfully")
+            logger.info("Detector initialized successfully")
             
             # Load per-class thresholds from config
             self.load_thresholds()
         except Exception as e:
             messagebox.showerror("Error", "Failed to initialize detector: {}".format(e))
-            print("[ERROR] Detector initialization failed: {}".format(e))
+            logger.error("Detector initialization failed: {}".format(e))
+            # Keep critical error print for production mode visibility
+            if not DEBUG_MODE:
+                print("[ERROR] Detector initialization failed: {}".format(e))
     
     def setup_gui(self):
         """Setup GUI layout - TD (Top-Down) layout"""
@@ -277,9 +302,24 @@ class DetectionGUI:
         self.threshold_container = ttk.Frame(threshold_frame)
         self.threshold_container.pack(fill=tk.X)
         
-        # Real-time Log/Statistics section
-        log_frame = ttk.LabelFrame(control_frame, text="Real-time Log & Statistics", padding="5")
+        # Session Timer Monitor section
+        log_frame = ttk.LabelFrame(control_frame, text="Session Timer Monitor", padding="5")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))  # Allow expansion
+        
+        # Header frame with "View Rule" button
+        log_header_frame = ttk.Frame(log_frame)
+        log_header_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        # "View Rule" label with hover effect
+        self.view_rule_label = ttk.Label(log_header_frame, text="ℹ View Rule", 
+                                         foreground="blue", cursor="hand2",
+                                         font=("Arial", 8, "underline"))
+        self.view_rule_label.pack(side=tk.RIGHT, padx=5)
+        
+        # Bind hover events for highlight effect
+        self.view_rule_label.bind("<Enter>", self._on_view_rule_enter)
+        self.view_rule_label.bind("<Leave>", self._on_view_rule_leave)
+        self.view_rule_label.bind("<Button-1>", self._show_session_timer_rule)
         
         # Create container for log display (no scrollbar - full content visible)
         self.log_container = ttk.Frame(log_frame)
@@ -417,7 +457,7 @@ class DetectionGUI:
         # Apply to detector
         if thresholds_dict:
             self.detector.set_class_thresholds(thresholds_dict)
-            print("[INFO] Loaded thresholds from config: {}".format(thresholds_dict))
+            logger.info("Loaded thresholds from config: {}".format(thresholds_dict))
     
     def on_threshold_change(self, class_name, value):
         """Callback when threshold slider changes"""
@@ -441,6 +481,9 @@ class DetectionGUI:
             self.save_thresholds_timer = self.root.after(500, self._debounced_save_thresholds)
             
         except Exception as e:
+            logger.error("Failed to update threshold for {}: {}".format(class_name, e))
+        # Keep critical error print for production mode visibility
+        if not DEBUG_MODE:
             print("[ERROR] Failed to update threshold for {}: {}".format(class_name, e))
     
     def _debounced_save_thresholds(self):
@@ -478,12 +521,12 @@ class DetectionGUI:
         fps = self.config.get('camera_fps', 30)
         use_gstreamer = self.config.get('use_gstreamer', True)  # Default True for Jetson (proven to work)
         
-        print("[DEBUG] Camera config: source={}, width={}, height={}, fps={}, use_gstreamer={}".format(source, width, height, fps, use_gstreamer))
+        logger.debug("Camera config: source={}, width={}, height={}, fps={}, use_gstreamer={}".format(source, width, height, fps, use_gstreamer))
         
         # CRITICAL: Release any existing camera capture first
         # This prevents "Failed to create CaptureSession" errors
         if self.capture is not None:
-            print("[INFO] Releasing existing camera capture...")
+            logger.info("Releasing existing camera capture...")
             try:
                 self.is_capturing = False  # Stop capture loop first
                 if self.capture_thread and self.capture_thread.is_alive():
@@ -492,9 +535,9 @@ class DetectionGUI:
                 self.capture.release()
                 import time
                 time.sleep(0.5)  # Wait for release to complete
-                print("[INFO] Camera released successfully")
+                logger.info("Camera released successfully")
             except Exception as e:
-                print("[WARN] Error releasing camera: {}".format(e))
+                logger.warning("Error releasing camera: {}".format(e))
             finally:
                 self.capture = None
         
@@ -506,14 +549,14 @@ class DetectionGUI:
             result = subprocess.Popen(['lsof', '/dev/video0'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
             stdout, stderr = result.communicate(timeout=2)
             if result.returncode == 0 and stdout:
-                print("[WARN] Camera /dev/video0 is in use. Attempting to free it...")
+                logger.warning("Camera /dev/video0 is in use. Attempting to free it...")
                 # Try to kill common camera processes (but not our own Python process)
                 try:
                     subprocess.Popen(['pkill', '-f', 'nvarguscamerasrc'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate(timeout=1)
                     subprocess.Popen(['pkill', '-f', 'gst-launch'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate(timeout=1)
                     import time
                     time.sleep(1.0)  # Wait for processes to terminate
-                    print("[INFO] Attempted to free camera resources")
+                    logger.info("Attempted to free camera resources")
                 except:
                     pass
         except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
@@ -577,11 +620,14 @@ class DetectionGUI:
             # Enable session buttons
             self.start_btn.config(state=tk.NORMAL)
             
-            print("[INFO] Camera capture started successfully (detection runs in main thread)")
+            logger.info("Camera capture started successfully (detection runs in main thread)")
         except Exception as e:
             error_msg = "Failed to start camera: {}\n\nCheck camera connection and try again.".format(e)
             messagebox.showerror("Camera Error", error_msg)
-            print("[ERROR] Camera start failed: {}".format(e))
+            logger.error("Camera start failed: {}".format(e))
+            # Keep critical error print for production mode visibility
+            if not DEBUG_MODE:
+                print("[ERROR] Camera start failed: {}".format(e))
     
     def capture_loop(self):
         """
@@ -596,7 +642,7 @@ class DetectionGUI:
             try:
                 ret, frame = self.capture.read()
                 if not ret or frame is None:
-                    print("[WARN] Failed to read frame")
+                    logger.warning("Failed to read frame")
                     time.sleep(0.1)
                     continue
                 
@@ -607,12 +653,15 @@ class DetectionGUI:
                 # Small delay to prevent overwhelming main thread
                 time.sleep(0.01)  # ~100 FPS max capture rate
             except Exception as e:
-                print("[ERROR] Error in capture loop: {}".format(e))
+                logger.error("Error in capture loop: {}".format(e))
+                # Keep critical error print for production mode visibility
+                if not DEBUG_MODE:
+                    print("[ERROR] Error in capture loop: {}".format(e))
                 time.sleep(0.1)
                 continue
         
         # Cleanup when loop exits
-        print("[INFO] Capture loop exiting, releasing camera...")
+        logger.info("Capture loop exiting, releasing camera...")
         if self.capture is not None:
             try:
                 self.capture.release()
@@ -691,9 +740,13 @@ class DetectionGUI:
                 self.current_frame = annotated_roi
                 self.current_detections = detections
             except Exception as e:
-                print("[ERROR] Detection failed: {}".format(e))
-                import traceback
-                traceback.print_exc()
+                logger.error("Detection failed: {}".format(e))
+                if DEBUG_MODE:
+                    import traceback
+                    traceback.print_exc()
+                # Keep critical error print for production mode visibility
+                if not DEBUG_MODE:
+                    print("[ERROR] Detection failed: {}".format(e))
                 # On error, still use cropped ROI frame (not full frame)
                 self.current_frame = roi_frame
                 self.current_detections = []
@@ -715,7 +768,10 @@ class DetectionGUI:
         try:
             self.update_display()
         except Exception as e:
-            print("[ERROR] Display update exception: {}".format(e))
+            logger.error("Display update exception: {}".format(e))
+            # Keep critical error print for production mode visibility
+            if not DEBUG_MODE:
+                print("[ERROR] Display update exception: {}".format(e))
         finally:
             self.pending_gui_updates = max(0, self.pending_gui_updates - 1)
     
@@ -817,7 +873,10 @@ class DetectionGUI:
                 self.last_legend_update = current_time
         
         except Exception as e:
-            print("[ERROR] Display update failed: {}".format(e))
+            logger.error("Display update failed: {}".format(e))
+            # Keep critical error print for production mode visibility
+            if not DEBUG_MODE:
+                print("[ERROR] Display update failed: {}".format(e))
     
     def update_defect_alerts(self):
         """Update visual alerts and defect status display"""
@@ -860,7 +919,10 @@ class DetectionGUI:
                     foreground="gray"
                 )
         except Exception as e:
-            print("[ERROR] Defect alerts update failed: {}".format(e))
+            logger.error("Defect alerts update failed: {}".format(e))
+            # Keep critical error print for production mode visibility
+            if not DEBUG_MODE:
+                print("[ERROR] Defect alerts update failed: {}".format(e))
     
     def start_session(self):
         """Start detection session"""
@@ -873,7 +935,7 @@ class DetectionGUI:
         self.session_status_label.config(text="Status: Active", foreground="green")
         self.log_path_label.config(text="Log file: Session active...", foreground="green")
         self.open_log_btn.config(state=tk.DISABLED)  # Disable open button during session
-        print("[INFO] Session started")
+        logger.info("Session started")
         self.update_log_display()
         self.update_session_duration()  # Start duration updates
     
@@ -884,16 +946,41 @@ class DetectionGUI:
             self.root.after_cancel(self.session_duration_update_timer)
             self.session_duration_update_timer = None
         
-        self.defect_logger.stop_session()
+        self.defect_logger.stop_session()  # Set session_active = False
         
-        # Calculate final session duration
-        if self.session_start_time:
-            duration = time.time() - self.session_start_time
+        # Calculate final stripe duration (first_stripe → last_stripe)
+        stripe_timing = self.defect_logger.get_stripe_timing_info()
+        
+        if stripe_timing and stripe_timing['duration'] > 0:
+            duration = stripe_timing['duration']
+            minutes = int(duration // 60)
+            seconds = int(duration % 60)
+            
+            if minutes > 0:
+                duration_text = "{}m {}s ({:.1f}min)".format(minutes, seconds, duration/60)
+            else:
+                duration_text = "{:.1f}s".format(duration)
+            
+            # Hiển thị thông tin chi tiết với timestamps
+            start_time_str = datetime.fromtimestamp(stripe_timing['start_time']).strftime("%H:%M:%S")
+            end_time_str = datetime.fromtimestamp(stripe_timing['end_time']).strftime("%H:%M:%S")
+            
             self.session_duration_label.config(
-                text="Duration: {:.1f}s ({:.1f}min)".format(duration, duration/60),
+                text="Duration: {} ({} → {})".format(
+                    duration_text,
+                    start_time_str,
+                    end_time_str
+                ),
                 foreground="gray"
             )
-            self.session_start_time = None
+        else:
+            # Không có stripe nào
+            self.session_duration_label.config(
+                text="Duration: 0s (no stripes)",
+                foreground="gray"
+            )
+        
+        self.session_start_time = None
         
         # Save log file
         log_path = self.defect_logger.save_session_log()
@@ -910,7 +997,7 @@ class DetectionGUI:
                 foreground="blue"
             )
             self.open_log_btn.config(state=tk.NORMAL)  # Enable open button
-            print("[INFO] Session log saved: {}".format(log_path))
+            logger.info("Session log saved: {}".format(log_path))
         else:
             self.current_log_path = None
             self.log_path_label.config(
@@ -919,29 +1006,115 @@ class DetectionGUI:
             )
             self.open_log_btn.config(state=tk.DISABLED)
         
-        print("[INFO] Session stopped")
+        logger.info("Session stopped")
         self.update_log_display()
     
     def update_session_duration(self):
-        """Update session duration display"""
-        if self.defect_logger.session_active and self.session_start_time:
-            duration = time.time() - self.session_start_time
-            minutes = int(duration // 60)
-            seconds = int(duration % 60)
-            if minutes > 0:
-                self.session_duration_label.config(
-                    text="Duration: {}m {}s".format(minutes, seconds),
-                    foreground="green"
-                )
-            else:
-                self.session_duration_label.config(
-                    text="Duration: {}s".format(seconds),
-                    foreground="green"
-                )
-            # Schedule next update
-            self.session_duration_update_timer = self.root.after(1000, self.update_session_duration)
-        else:
+        """Update session duration display - shows stripe duration"""
+        if not self.defect_logger.session_active:
             self.session_duration_label.config(text="Duration: 0s", foreground="gray")
+            return
+        
+        # Lấy stripe duration từ logger
+        stripe_duration = self.defect_logger.get_stripe_duration()
+        
+        if stripe_duration is None:
+            # Chưa có stripe nào
+            self.session_duration_label.config(
+                text="Duration: Waiting for stripe...",
+                foreground="gray"
+            )
+        else:
+            # Hiển thị duration từ first stripe → current time (vì session đang active)
+            minutes = int(stripe_duration // 60)
+            seconds = int(stripe_duration % 60)
+            
+            if minutes > 0:
+                text = "Duration: {}m {}s".format(minutes, seconds)
+            else:
+                text = "Duration: {}s".format(seconds)
+            
+            self.session_duration_label.config(
+                text=text,
+                foreground="green"  # Active - đang chạy
+            )
+        
+        # Schedule next update
+        self.session_duration_update_timer = self.root.after(1000, self.update_session_duration)
+    
+    def _on_view_rule_enter(self, event):
+        """Highlight effect when hovering over View Rule"""
+        self.view_rule_label.config(foreground="darkblue", font=("Arial", 8, "bold", "underline"))
+    
+    def _on_view_rule_leave(self, event):
+        """Reset highlight when leaving View Rule"""
+        self.view_rule_label.config(foreground="blue", font=("Arial", 8, "underline"))
+    
+    def _show_session_timer_rule(self, event):
+        """Show popup window with session timer rule explanation"""
+        rule_text = """Session Timer Rule
+
+The session timer measures the duration from the first stripe appearance to the last stripe appearance.
+
+• Stripe Definition: Any detection (normal or defect class) counts as a "stripe"
+
+• Timer Behavior:
+  - Start Session: Timer waits for the first stripe to appear
+  - First Stripe: Timer begins counting from this moment
+  - Active Period: Timer continues counting while session is active
+  - Stop Session: Timer shows final duration (first stripe → last stripe)
+
+• Display Format:
+  - Active: "Duration: Xm Ys" (updates every second)
+  - Waiting: "Duration: Waiting for stripe..."
+  - Final: "Duration: Xm Ys (HH:MM:SS → HH:MM:SS)"
+
+• Purpose:
+  Start/Stop Session buttons serve as ROI markers for when new wire is loaded into camera view. The timer measures actual wire processing time, not user interaction time."""
+        
+        # Create popup window
+        popup = tk.Toplevel(self.root)
+        popup.title("Session Timer Rule")
+        popup.geometry("500x400")
+        popup.resizable(False, False)
+        
+        # Make popup modal (focus on it)
+        popup.transient(self.root)
+        popup.grab_set()
+        
+        # Center popup on screen
+        popup.update_idletasks()
+        x = (popup.winfo_screenwidth() // 2) - (popup.winfo_width() // 2)
+        y = (popup.winfo_screenheight() // 2) - (popup.winfo_height() // 2)
+        popup.geometry(f"+{x}+{y}")
+        
+        # Create text widget with scrollbar
+        text_frame = ttk.Frame(popup, padding="10")
+        text_frame.pack(fill=tk.BOTH, expand=True)
+        
+        text_widget = tk.Text(text_frame, wrap=tk.WORD, font=("Arial", 10),
+                             padx=10, pady=10, relief=tk.FLAT, bg="#f5f5f5")
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=text_widget.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text_widget.config(yscrollcommand=scrollbar.set)
+        
+        # Insert rule text
+        text_widget.insert("1.0", rule_text)
+        text_widget.config(state=tk.DISABLED)  # Make read-only
+        
+        # Close button
+        button_frame = ttk.Frame(popup, padding="10")
+        button_frame.pack(fill=tk.X)
+        
+        close_btn = ttk.Button(button_frame, text="Close", command=popup.destroy)
+        close_btn.pack()
+        
+        # Focus on close button
+        close_btn.focus_set()
+        popup.bind("<Return>", lambda e: popup.destroy())
+        popup.bind("<Escape>", lambda e: popup.destroy())
     
     def open_log_file(self):
         """Open log file in default system application"""
@@ -961,33 +1134,36 @@ class DetectionGUI:
             else:  # Linux
                 subprocess.run(["xdg-open", str(self.current_log_path)])
             
-            print("[INFO] Opened log file: {}".format(self.current_log_path))
+            logger.info("Opened log file: {}".format(self.current_log_path))
         except Exception as e:
             messagebox.showerror("Error", "Failed to open log file: {}".format(e))
-            print("[ERROR] Failed to open log file: {}".format(e))
+            logger.error("Failed to open log file: {}".format(e))
+            # Keep critical error print for production mode visibility
+            if not DEBUG_MODE:
+                print("[ERROR] Failed to open log file: {}".format(e))
     
     def on_closing(self):
         """Handle window close event"""
-        print("[INFO] Closing application, cleaning up resources...")
+        logger.info("Closing application, cleaning up resources...")
         
         # Stop capture loop first
         self.is_capturing = False
         
         # Wait for capture thread to finish (with timeout)
         if self.capture_thread and self.capture_thread.is_alive():
-            print("[INFO] Waiting for capture thread to finish...")
+            logger.info("Waiting for capture thread to finish...")
             self.capture_thread.join(timeout=2.0)
         
         # Release camera with proper cleanup
         if self.capture is not None:
-            print("[INFO] Releasing camera...")
+            logger.info("Releasing camera...")
             try:
                 self.capture.release()
                 import time
                 time.sleep(0.3)  # Give camera time to release
-                print("[INFO] Camera released")
+                logger.info("Camera released")
             except Exception as e:
-                print("[WARN] Error releasing camera: {}".format(e))
+                logger.warning("Error releasing camera: {}".format(e))
             finally:
                 self.capture = None
         
@@ -1000,7 +1176,7 @@ class DetectionGUI:
         self.save_thresholds()
         self.save_config()
         
-        print("[INFO] Cleanup complete, closing window...")
+        logger.info("Cleanup complete, closing window...")
         self.root.destroy()
     
     def update_log_display(self):
@@ -1182,9 +1358,13 @@ class DetectionGUI:
                 self.log_widgets['class_header'].grid()
             
         except Exception as e:
-            print("[ERROR] Failed to update log display: {}".format(e))
-            import traceback
-            traceback.print_exc()
+            logger.error("Failed to update log display: {}".format(e))
+            if DEBUG_MODE:
+                import traceback
+                traceback.print_exc()
+            # Keep critical error print for production mode visibility
+            if not DEBUG_MODE:
+                print("[ERROR] Failed to update log display: {}".format(e))
 
 
 def main():
