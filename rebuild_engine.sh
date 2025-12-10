@@ -13,9 +13,17 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 cd "$SCRIPT_DIR"
 
-MODELS_DIR="$SCRIPT_DIR/models"
-ONNX_PATH="$MODELS_DIR/best_v3_416x256.onnx"
-ENGINE_PATH="$MODELS_DIR/best_v3_416x256.engine"
+MODEL_CONFIG="$SCRIPT_DIR/model_config.json"
+
+# Load paths from config.json
+if [ ! -f "$MODEL_CONFIG" ]; then
+    echo "[ERROR] Model config not found: $MODEL_CONFIG"
+    exit 1
+fi
+
+# Extract paths from JSON (requires python or jq)
+ONNX_PATH=$(python3 -c "import json; print(json.load(open('$MODEL_CONFIG'))['onnx_model_path'])" | sed "s|^models/|$SCRIPT_DIR/models/|")
+ENGINE_PATH=$(python3 -c "import json; print(json.load(open('$MODEL_CONFIG'))['tensorrt_engine_path'])" | sed "s|^models/|$SCRIPT_DIR/models/|")
 
 echo "=============================================================="
 echo "Rebuild TensorRT Engine"

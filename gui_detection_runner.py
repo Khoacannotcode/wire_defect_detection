@@ -93,8 +93,19 @@ class DetectionGUI:
     
     def load_config(self):
         """Load configuration from config.json"""
+        # Load model paths from model_config.json
+        model_config_path = ROOT_DIR / 'model_config.json'
+        onnx_path = None
+        if model_config_path.exists():
+            try:
+                with open(model_config_path, 'r') as f:
+                    model_config = json.load(f)
+                    onnx_path = str(ROOT_DIR / model_config['onnx_model_path'])
+            except Exception as e:
+                print(f"[WARN] Failed to load model_config.json: {e}")
+        
         default_config = {
-            'model_path': str(MODELS_DIR / 'best_v3_416x256.onnx'),
+            'model_path': onnx_path or str(MODELS_DIR / 'best_v3_416x256.onnx'),
             'camera_source': '0',
             'camera_width': 1280,
             'camera_height': 720,

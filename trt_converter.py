@@ -12,16 +12,28 @@ import tensorrt as trt
 from pathlib import Path
 
 # --- Use relative paths based on the script's location ---
-# Assumes the following structure on Jetson:
-# /some_path/
-# ├── trt_converter.py  (this script)
-# └── models/
-#     ├── best_v3_416x256.onnx
-#     └── best_v3_416x256.engine (will be created)
+# Load model paths from model_config.json
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-ONNX_MODEL_PATH = SCRIPT_DIR / "models" / "best_v3_416x256.onnx"
-ENGINE_PATH = SCRIPT_DIR / "models" / "best_v3_416x256.engine"
+MODEL_CONFIG_PATH = SCRIPT_DIR / "model_config.json"
+
+def load_model_config():
+    """Load model paths from model_config.json"""
+    if not MODEL_CONFIG_PATH.exists():
+        raise FileNotFoundError(f"Model config not found: {MODEL_CONFIG_PATH}")
+    
+    import json
+    with open(MODEL_CONFIG_PATH, 'r') as f:
+        config = json.load(f)
+    
+    # Resolve relative paths
+    onnx_path = SCRIPT_DIR / config['onnx_model_path']
+    engine_path = SCRIPT_DIR / config['tensorrt_engine_path']
+    
+    return onnx_path, engine_path
+
+# Load paths from config
+ONNX_MODEL_PATH, ENGINE_PATH = load_model_config()
 
 # Logger for TensorRT warnings, errors, and info
 TRT_LOGGER = trt.Logger(trt.Logger.WARNING)

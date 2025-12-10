@@ -503,9 +503,21 @@ __all__ = ['LiveWireDetector', 'open_capture', 'MODELS_DIR', 'CLASS_COLORS']
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Real-time wire defect detection with TensorRT")
+    # Load default engine path from model_config.json
+    model_config_path = SCRIPT_DIR / "model_config.json"
+    default_engine_path = str(MODELS_DIR / "best_v3_416x256.engine")
+    if model_config_path.exists():
+        try:
+            import json
+            with open(model_config_path, 'r') as f:
+                model_config = json.load(f)
+                default_engine_path = str(SCRIPT_DIR / model_config['tensorrt_engine_path'])
+        except Exception as e:
+            print(f"[WARN] Failed to load model_config.json: {e}")
+    
     parser.add_argument(
         "--model",
-        default=str(MODELS_DIR / "best_cropped.engine"),
+        default=default_engine_path,
         help="Path to TensorRT engine file.",
     )
     parser.add_argument(

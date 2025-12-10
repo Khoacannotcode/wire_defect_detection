@@ -1,0 +1,6 @@
+{
+  "onnx_model_path": "models/best_v3_416x256.onnx",
+  "tensorrt_engine_path": "models/best_v3_416x256.engine",
+  "class_names_path": "models/class_names.txt"
+}
+
