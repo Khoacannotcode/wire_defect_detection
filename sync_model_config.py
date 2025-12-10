@@ -11,28 +11,32 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 MODELS_DIR = SCRIPT_DIR / "models"
 MODEL_CONFIG = SCRIPT_DIR / "model_config.json"
 
-def sync_model_config():
+def sync_model_config(verbose=True):
     """Sync model_config.json with actual files"""
-    print("=" * 80)
-    print("Syncing model_config.json with actual model files")
-    print("=" * 80)
+    if verbose:
+        print("=" * 80)
+        print("Syncing model_config.json with actual model files")
+        print("=" * 80)
     
     if not MODELS_DIR.exists():
-        print(f"[ERROR] Models directory not found: {MODELS_DIR}")
+        if verbose:
+            print(f"[ERROR] Models directory not found: {MODELS_DIR}")
         return False
     
     # Find ONNX files
     onnx_files = sorted(list(MODELS_DIR.glob("*.onnx")))
     if not onnx_files:
-        print(f"[ERROR] No ONNX files found in {MODELS_DIR}")
+        if verbose:
+            print(f"[ERROR] No ONNX files found in {MODELS_DIR}")
         return False
     
     # Find engine files
     engine_files = sorted(list(MODELS_DIR.glob("*.engine")))
     
-    print(f"\n[Found Files]")
-    print(f"  ONNX files: {[f.name for f in onnx_files]}")
-    print(f"  Engine files: {[f.name for f in engine_files]}")
+    if verbose:
+        print(f"\n[Found Files]")
+        print(f"  ONNX files: {[f.name for f in onnx_files]}")
+        print(f"  Engine files: {[f.name for f in engine_files]}")
     
     # Select best match
     # Prefer best_v3_416x256, otherwise use first ONNX found
@@ -68,22 +72,26 @@ def sync_model_config():
     else:
         # Create expected engine path
         config["tensorrt_engine_path"] = f"models/{preferred_onnx.stem}.engine"
-        print(f"  [INFO] Engine not found, will be built: {config['tensorrt_engine_path']}")
+        if verbose:
+            print(f"  [INFO] Engine not found, will be built: {config['tensorrt_engine_path']}")
     
     # Save config
     with open(MODEL_CONFIG, 'w') as f:
         json.dump(config, f, indent=2)
     
-    print(f"\n[Updated Config]")
-    print(f"  ONNX: {config['onnx_model_path']}")
-    print(f"  Engine: {config['tensorrt_engine_path']}")
-    print(f"  Class names: {config['class_names_path']}")
+    if verbose:
+        print(f"\n[Updated Config]")
+        print(f"  ONNX: {config['onnx_model_path']}")
+        print(f"  Engine: {config['tensorrt_engine_path']}")
+        print(f"  Class names: {config['class_names_path']}")
+        print(f"\n[OK] model_config.json updated successfully")
+        print("=" * 80)
     
-    print(f"\n[OK] model_config.json updated successfully")
-    print("=" * 80)
     return True
 
 if __name__ == "__main__":
-    success = sync_model_config()
+    import sys
+    verbose = "--quiet" not in sys.argv
+    success = sync_model_config(verbose=verbose)
     exit(0 if success else 1)
 

@@ -125,6 +125,8 @@ class DetectionGUI:
             try:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     user_config = json.load(f)
+                    # Remove model_path from user_config - it should always come from model_config.json
+                    user_config.pop('model_path', None)
                     default_config.update(user_config)
             except Exception as e:
                 print("[WARN] Failed to load config.json: {}, using defaults".format(e))
@@ -132,16 +134,22 @@ class DetectionGUI:
             # Create default config file
             self.save_config(default_config)
         
+        # Force model_path from model_config.json (never allow config.json to override it)
+        default_config['model_path'] = default_model_path
+        
         return default_config
     
     def save_config(self, config=None):
-        """Save configuration to config.json"""
+        """Save configuration to config.json (model_path is excluded - it comes from model_config.json)"""
         if config is None:
             config = self.config
         
+        # Create a copy without model_path (model_path should only be in model_config.json)
+        config_to_save = {k: v for k, v in config.items() if k != 'model_path'}
+        
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
+                json.dump(config_to_save, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print("[ERROR] Failed to save config.json: {}".format(e))
     
