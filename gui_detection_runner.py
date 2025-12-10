@@ -1080,13 +1080,18 @@ The session timer measures the duration from the first stripe appearance to the 
         
         # Make popup modal (focus on it)
         popup.transient(self.root)
-        popup.grab_set()
+        
+        # CRITICAL: Update window first to make it viewable before grab_set()
+        popup.update_idletasks()
         
         # Center popup on screen
-        popup.update_idletasks()
         x = (popup.winfo_screenwidth() // 2) - (popup.winfo_width() // 2)
         y = (popup.winfo_screenheight() // 2) - (popup.winfo_height() // 2)
         popup.geometry(f"+{x}+{y}")
+        
+        # Update again after centering, then set grab
+        popup.update_idletasks()
+        popup.grab_set()
         
         # Create text widget with scrollbar
         text_frame = ttk.Frame(popup, padding="10")
