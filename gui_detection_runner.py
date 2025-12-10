@@ -242,38 +242,6 @@ class DetectionGUI:
         control_frame = ttk.LabelFrame(main_frame, text="Control Panel", padding="5")
         control_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
         
-        # Session Alarm Frame (separate frame above session controls)
-        alarm_section_frame = ttk.LabelFrame(control_frame, text="Session Alarm", padding="5")
-        alarm_section_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        # Header frame with "View Rule" button
-        alarm_header_frame = ttk.Frame(alarm_section_frame)
-        alarm_header_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        # "View Rule" label with hover effect
-        self.alarm_view_rule_label = ttk.Label(alarm_header_frame, text="ℹ View Rule", 
-                                               foreground="blue", cursor="hand2",
-                                               font=("Arial", 8, "underline"))
-        self.alarm_view_rule_label.pack(side=tk.RIGHT, padx=5)
-        
-        # Bind hover events for highlight effect
-        self.alarm_view_rule_label.bind("<Enter>", self._on_alarm_view_rule_enter)
-        self.alarm_view_rule_label.bind("<Leave>", self._on_alarm_view_rule_leave)
-        self.alarm_view_rule_label.bind("<Button-1>", self._show_alarm_rule)
-        
-        # Alarm content frame
-        alarm_content_frame = ttk.Frame(alarm_section_frame)
-        alarm_content_frame.pack(fill=tk.X)
-        
-        # Alarm icon with animation (using "!" instead of emoji for Python 3.6 compatibility)
-        self.alarm_icon_label = ttk.Label(alarm_content_frame, text="!", font=("Arial", 20, "bold"))
-        self.alarm_icon_label.pack(side=tk.LEFT, padx=2)
-        
-        # Alarm description (only shown when alarm is active)
-        self.alarm_text_label = ttk.Label(alarm_content_frame, text="", 
-                                          foreground="red", font=("Arial", 9, "bold"))
-        self.alarm_text_label.pack(side=tk.LEFT, padx=5)
-        
         # Session controls
         session_frame = ttk.Frame(control_frame)
         session_frame.pack(fill=tk.X, pady=(0, 5))
@@ -289,11 +257,6 @@ class DetectionGUI:
         self.session_status_label = ttk.Label(session_frame, text="Status: Stopped", 
                                               foreground="gray")
         self.session_status_label.pack(side=tk.LEFT, padx=10)
-        
-        # Session duration display
-        self.session_duration_label = ttk.Label(session_frame, text="Duration: 0s", 
-                                                foreground="gray", font=("Arial", 9))
-        self.session_duration_label.pack(side=tk.LEFT, padx=10)
         
         # Store session start time for duration calculation
         self.session_start_time = None
@@ -343,12 +306,20 @@ class DetectionGUI:
         log_frame = ttk.LabelFrame(control_frame, text="Session Timer Monitor", padding="5")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 0))  # Allow expansion
         
-        # Header frame with "View Rule" button
-        log_header_frame = ttk.Frame(log_frame)
-        log_header_frame.pack(fill=tk.X, pady=(0, 5))
+        # ============================================
+        # Session Timer Frame (inside Session Timer Monitor)
+        # ============================================
+        timer_section_frame = ttk.Frame(log_frame)
+        timer_section_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        # Timer header frame with "View Rule" button
+        timer_header_frame = ttk.Frame(timer_section_frame)
+        timer_header_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Label(timer_header_frame, text="Session Timer:", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(0, 5))
         
         # "View Rule" label with hover effect
-        self.view_rule_label = ttk.Label(log_header_frame, text="ℹ View Rule", 
+        self.view_rule_label = ttk.Label(timer_header_frame, text="ℹ View Rule", 
                                          foreground="blue", cursor="hand2",
                                          font=("Arial", 8, "underline"))
         self.view_rule_label.pack(side=tk.RIGHT, padx=5)
@@ -358,6 +329,53 @@ class DetectionGUI:
         self.view_rule_label.bind("<Leave>", self._on_view_rule_leave)
         self.view_rule_label.bind("<Button-1>", self._show_session_timer_rule)
         
+        # Session duration display
+        timer_content_frame = ttk.Frame(timer_section_frame)
+        timer_content_frame.pack(fill=tk.X)
+        
+        self.session_duration_label = ttk.Label(timer_content_frame, text="Duration: 0s", 
+                                                foreground="gray", font=("Arial", 9))
+        self.session_duration_label.pack(side=tk.LEFT, padx=5)
+        
+        # ============================================
+        # Session Alarm Frame (inside Session Timer Monitor)
+        # ============================================
+        alarm_section_frame = ttk.Frame(log_frame)
+        alarm_section_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        # Alarm header frame with "View Rule" button
+        alarm_header_frame = ttk.Frame(alarm_section_frame)
+        alarm_header_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Label(alarm_header_frame, text="Session Alarm:", font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=(0, 5))
+        
+        # "View Rule" label with hover effect
+        self.alarm_view_rule_label = ttk.Label(alarm_header_frame, text="ℹ View Rule", 
+                                               foreground="blue", cursor="hand2",
+                                               font=("Arial", 8, "underline"))
+        self.alarm_view_rule_label.pack(side=tk.RIGHT, padx=5)
+        
+        # Bind hover events for highlight effect
+        self.alarm_view_rule_label.bind("<Enter>", self._on_alarm_view_rule_enter)
+        self.alarm_view_rule_label.bind("<Leave>", self._on_alarm_view_rule_leave)
+        self.alarm_view_rule_label.bind("<Button-1>", self._show_alarm_rule)
+        
+        # Alarm content frame
+        alarm_content_frame = ttk.Frame(alarm_section_frame)
+        alarm_content_frame.pack(fill=tk.X)
+        
+        # Alarm icon with animation (using "!" instead of emoji for Python 3.6 compatibility)
+        self.alarm_icon_label = ttk.Label(alarm_content_frame, text="!", font=("Arial", 20, "bold"))
+        self.alarm_icon_label.pack(side=tk.LEFT, padx=2)
+        
+        # Alarm description (only shown when alarm is active)
+        self.alarm_text_label = ttk.Label(alarm_content_frame, text="", 
+                                          foreground="red", font=("Arial", 9, "bold"))
+        self.alarm_text_label.pack(side=tk.LEFT, padx=5)
+        
+        # ============================================
+        # Log Display (inside Session Timer Monitor)
+        # ============================================
         # Create container for log display (no scrollbar - full content visible)
         self.log_container = ttk.Frame(log_frame)
         self.log_container.pack(fill=tk.BOTH, expand=True)  # Allow expansion
