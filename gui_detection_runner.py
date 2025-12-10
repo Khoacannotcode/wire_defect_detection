@@ -482,26 +482,56 @@ class DetectionGUI:
             slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
             
             # Bind click event to jump slider to clicked position
+            # Note: ttk.Scale may not trigger Button-1 on track, so we also try ButtonRelease-1
             def on_slider_click(event, scale=slider, name=class_name):
                 """Handle click on slider track - jump to clicked position"""
-                # Calculate value based on click position
-                # Get slider width and position
-                scale.update_idletasks()
-                scale_width = scale.winfo_width()
-                if scale_width <= 1:
-                    return  # Slider not yet sized
+                # Only process if click is on the scale widget itself
+                if event.widget != scale:
+                    return
                 
-                # Get click position relative to slider
+                # Get click position relative to slider widget
                 click_x = event.x
                 
-                # Calculate value: 0.0 at left edge, 1.0 at right edge
-                value = click_x / scale_width
+                # Get slider dimensions
+                scale.update_idletasks()
+                scale_width = scale.winfo_width()
+                
+                if scale_width <= 1:
+                    # Fallback: use configured length if widget not yet sized
+                    scale_width = 200
+                
+                # For ttk.Scale, calculate value directly from click position
+                # 0.0 at left edge, 1.0 at right edge
+                value = click_x / scale_width if scale_width > 0 else 0.5
                 value = max(0.0, min(1.0, value))  # Clamp to range
                 
                 # Set slider value (this will trigger command callback)
                 scale.set(value)
+                return "break"  # Prevent default behavior
             
-            slider.bind("<Button-1>", on_slider_click)
+            # Try multiple event bindings to catch clicks on track
+            slider.bind("<Button-1>", on_slider_click, add=True)
+            slider.bind("<ButtonRelease-1>", on_slider_click, add=True)
+            
+            # Also bind to parent frame to catch clicks that might miss the scale
+            def on_frame_click(event, scale=slider, frame=slider_frame, name=class_name):
+                """Handle click on slider frame - jump to clicked position"""
+                # Check if click is within slider area
+                slider_x = scale.winfo_x() - frame.winfo_x()
+                slider_width = scale.winfo_width()
+                
+                # Get click position relative to frame
+                frame_x = event.x
+                
+                # Check if click is within slider bounds
+                if slider_x <= frame_x <= slider_x + slider_width:
+                    # Calculate relative position on slider
+                    relative_x = frame_x - slider_x
+                    value = relative_x / slider_width if slider_width > 0 else 0.5
+                    value = max(0.0, min(1.0, value))
+                    scale.set(value)
+            
+            slider_frame.bind("<Button-1>", on_frame_click)
             
             # Value label (shows current threshold)
             value_label = ttk.Label(slider_frame, text="0.25", width=6, anchor=tk.E)
