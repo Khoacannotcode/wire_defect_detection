@@ -38,6 +38,61 @@ class DefectCluster:
     def get_frame_count(self) -> int:
         """Get number of frames in cluster"""
         return self.end_frame - self.start_frame + 1
+    
+    def check_alarm_conditions(self) -> Optional[Dict]:
+        """
+        Check if cluster meets alarm conditions
+        
+        Alarm rules:
+        - damage: 1 defect in cluster >0.2s
+        - shift/drop/break: total 5 defects (any combination) in cluster >0.5s
+        
+        Returns:
+            None if no alarm, or Dict with alarm info:
+            {
+                'type': 'damage' or 'multi_defect',
+                'class' or 'classes': class name(s) involved,
+                'count': number of defects,
+                'duration': cluster duration in seconds,
+                'message': human-readable alarm message
+            }
+        """
+        duration = self.get_duration()
+        
+        # Filter out NOK from class_counts (NOK not counted in alarm)
+        relevant_counts = {k: v for k, v in self.class_counts.items() if k != 'NOK'}
+        
+        # Check damage: 1 defect >0.2s
+        if 'damage' in relevant_counts and relevant_counts['damage'] >= 1 and duration > 0.2:
+            return {
+                'type': 'damage',
+                'class': 'damage',
+                'count': relevant_counts['damage'],
+                'duration': duration,
+                'message': 'Damage: 1 defect detected (>0.2s)'
+            }
+        
+        # Check shift/drop/break: TOTAL 5 defects BẤT KỲ trong nhóm >0.5s
+        shift_drop_break_count = sum(
+            relevant_counts.get(class_name, 0) 
+            for class_name in ['shift', 'drops', 'breaks']
+        )
+        
+        if shift_drop_break_count >= 5 and duration > 0.5:
+            # Find which classes are involved
+            involved_classes = [
+                class_name for class_name in ['shift', 'drops', 'breaks']
+                if relevant_counts.get(class_name, 0) > 0
+            ]
+            return {
+                'type': 'multi_defect',
+                'classes': involved_classes,
+                'count': shift_drop_break_count,
+                'duration': duration,
+                'message': f'Shift/Drop/Break: {shift_drop_break_count} defects detected (>0.5s)'
+            }
+        
+        return None
 
 
 class DefectLogger:
@@ -493,6 +548,24 @@ class DefectLogger:
             'defect_count': len(self.active_cluster.detections),
             'classes': dict(self.active_cluster.class_counts)
         }
+    
+    def get_active_alarm(self) -> Optional[Dict]:
+        """
+        Get active alarm info from current cluster
+        
+        Only returns alarm if session is active.
+        Alarm clears immediately when conditions no longer met.
+        
+        Returns:
+            None if no alarm, or Dict with alarm info from check_alarm_conditions()
+        """
+        if not self.session_active:
+            return None
+        
+        if self.active_cluster is None:
+            return None
+        
+        return self.active_cluster.check_alarm_conditions()
     
     def get_session_stats(self) -> Dict:
         """

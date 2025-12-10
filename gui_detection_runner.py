@@ -81,7 +81,12 @@ class DetectionGUI:
         self.last_alert_update = time.time()
         self.alert_update_interval = 0.2  # Update alerts every 200ms (5 FPS for alerts)
         self.last_legend_update = time.time()
-        self.legend_update_interval = 0.3  # Update legend highlighting every 300ms
+        self.legend_update_interval = 0.3
+        
+        # Session alarm animation state
+        self.alarm_animation_active = False
+        self.alarm_animation_state = 0
+        self.alarm_animation_timer = None  # Update legend highlighting every 300ms
         
         # Config
         self.config_file = ROOT_DIR / 'config.json'
@@ -257,6 +262,19 @@ class DetectionGUI:
         self.session_duration_label = ttk.Label(session_frame, text="Duration: 0s", 
                                                 foreground="gray", font=("Arial", 9))
         self.session_duration_label.pack(side=tk.LEFT, padx=10)
+        
+        # Session Alarm Frame (separate frame below session timer)
+        alarm_frame = ttk.Frame(session_frame)
+        alarm_frame.pack(side=tk.LEFT, padx=10)
+        
+        # Alarm icon with animation
+        self.alarm_icon_label = ttk.Label(alarm_frame, text="🚨", font=("Arial", 20))
+        self.alarm_icon_label.pack(side=tk.LEFT, padx=2)
+        
+        # Alarm description (only shown when alarm is active)
+        self.alarm_text_label = ttk.Label(alarm_frame, text="", 
+                                          foreground="red", font=("Arial", 9, "bold"))
+        self.alarm_text_label.pack(side=tk.LEFT, padx=5)
         
         # Store session start time for duration calculation
         self.session_start_time = None
@@ -841,6 +859,7 @@ class DetectionGUI:
             current_time = time.time()
             if current_time - self.last_alert_update >= self.alert_update_interval:
                 self.update_defect_alerts()
+                self.update_session_alarm()  # Update session alarm
                 self.last_alert_update = current_time
             
             # Update log display periodically (not every frame for performance)
@@ -923,6 +942,61 @@ class DetectionGUI:
             # Keep critical error print for production mode visibility
             if not DEBUG_MODE:
                 print("[ERROR] Defect alerts update failed: {}".format(e))
+    
+    def _animate_alarm_icon(self):
+        """Simple but eye-catching animation for alarm icon"""
+        if not self.alarm_animation_active:
+            return
+        
+        # Toggle between normal and bold/larger
+        if self.alarm_animation_state == 0:
+            self.alarm_icon_label.config(font=("Arial", 24, "bold"))
+            self.alarm_animation_state = 1
+        else:
+            self.alarm_icon_label.config(font=("Arial", 20))
+            self.alarm_animation_state = 0
+        
+        # Schedule next animation (every 500ms for visible effect)
+        self.alarm_animation_timer = self.root.after(500, self._animate_alarm_icon)
+    
+    def update_session_alarm(self):
+        """Update session alarm display based on active cluster conditions"""
+        try:
+            alarm_info = self.defect_logger.get_active_alarm()
+            
+            if alarm_info:
+                # Show alarm
+                self.alarm_text_label.config(
+                    text=alarm_info['message'],
+                    foreground="red"
+                )
+                
+                # Start animation if not already active
+                if not self.alarm_animation_active:
+                    self.alarm_animation_active = True
+                    self.alarm_animation_state = 0
+                    self._animate_alarm_icon()
+                
+                # TODO: Future - trigger sound alarm here
+                # self._trigger_sound_alarm()
+            else:
+                # Clear alarm
+                self.alarm_text_label.config(text="")
+                
+                # Stop animation
+                if self.alarm_animation_active:
+                    self.alarm_animation_active = False
+                    if self.alarm_animation_timer is not None:
+                        self.root.after_cancel(self.alarm_animation_timer)
+                        self.alarm_animation_timer = None
+                    self.alarm_icon_label.config(font=("Arial", 20))  # Reset to normal
+                    self.alarm_animation_state = 0
+                    
+        except Exception as e:
+            logger.error("Session alarm update failed: {}".format(e))
+            # Keep critical error print for production mode visibility
+            if not DEBUG_MODE:
+                print("[ERROR] Session alarm update failed: {}".format(e))
     
     def start_session(self):
         """Start detection session"""
