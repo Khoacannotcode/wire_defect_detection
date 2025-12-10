@@ -267,8 +267,8 @@ class DetectionGUI:
         alarm_frame = ttk.Frame(session_frame)
         alarm_frame.pack(side=tk.LEFT, padx=10)
         
-        # Alarm icon with animation
-        self.alarm_icon_label = ttk.Label(alarm_frame, text="🚨", font=("Arial", 20))
+        # Alarm icon with animation (using "!" instead of emoji for Python 3.6 compatibility)
+        self.alarm_icon_label = ttk.Label(alarm_frame, text="!", font=("Arial", 20, "bold"))
         self.alarm_icon_label.pack(side=tk.LEFT, padx=2)
         
         # Alarm description (only shown when alarm is active)
@@ -950,10 +950,10 @@ class DetectionGUI:
         
         # Toggle between normal and bold/larger
         if self.alarm_animation_state == 0:
-            self.alarm_icon_label.config(font=("Arial", 24, "bold"))
+            self.alarm_icon_label.config(font=("Arial", 24, "bold"), foreground="red")
             self.alarm_animation_state = 1
         else:
-            self.alarm_icon_label.config(font=("Arial", 20))
+            self.alarm_icon_label.config(font=("Arial", 20, "bold"), foreground="darkred")
             self.alarm_animation_state = 0
         
         # Schedule next animation (every 500ms for visible effect)
@@ -989,7 +989,7 @@ class DetectionGUI:
                     if self.alarm_animation_timer is not None:
                         self.root.after_cancel(self.alarm_animation_timer)
                         self.alarm_animation_timer = None
-                    self.alarm_icon_label.config(font=("Arial", 20))  # Reset to normal
+                    self.alarm_icon_label.config(font=("Arial", 20, "bold"), foreground="gray")  # Reset to normal (inactive)
                     self.alarm_animation_state = 0
                     
         except Exception as e:
