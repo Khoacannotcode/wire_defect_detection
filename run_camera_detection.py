@@ -15,6 +15,25 @@ import numpy as np
 from pathlib import Path
 from collections import deque
 import sys
+import logging
+import os
+
+# Configure logging based on DEBUG environment variable
+DEBUG_MODE = os.getenv('DEBUG', '0') in ('1', 'true', 'True', 'TRUE')
+if DEBUG_MODE:
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='[%(levelname)s] %(message)s',
+        datefmt='%H:%M:%S'
+    )
+else:
+    logging.basicConfig(
+        level=logging.WARNING,  # Only WARNING and ERROR in production
+        format='[%(levelname)s] %(message)s',
+        datefmt='%H:%M:%S'
+    )
+
+logger = logging.getLogger(__name__)
 
 # Import TRTDetector - when run from shipping directory, use direct import
 from trt_inference import TRTDetector
@@ -63,7 +82,7 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
     
     cap = None
     
-    print("[DEBUG] Camera capture settings: source={}, width={}, height={}, fps={}, use_gstreamer={}".format(source_int, width, height, fps, use_gstreamer))
+    logger.debug("Camera capture settings: source={}, width={}, height={}, fps={}, use_gstreamer={}".format(source_int, width, height, fps, use_gstreamer))
     
     # CRITICAL: Check if camera is available and try to free it if in use
     # "Failed to create CaptureSession" usually means camera is in use
@@ -74,9 +93,9 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
         result = subprocess.Popen(['lsof', '/dev/video0'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         stdout, stderr = result.communicate(timeout=2)
         if result.returncode == 0 and stdout:
-            print("[WARN] Camera /dev/video0 appears to be in use by another process:")
-            print(stdout)
-            print("[INFO] Attempting to free camera resources...")
+            logger.warning("Camera /dev/video0 appears to be in use by another process:")
+            logger.warning(stdout)
+            logger.info("Attempting to free camera resources...")
             # Try to kill common camera processes (but be careful not to kill our own process)
             try:
                 # Kill nvarguscamerasrc processes (GStreamer camera source)
@@ -84,17 +103,17 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
                 # Kill gst-launch processes
                 subprocess.Popen(['pkill', '-f', 'gst-launch'], stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate(timeout=1)
                 time.sleep(1.0)  # Wait for processes to terminate
-                print("[INFO] Attempted to free camera, retrying...")
+                logger.info("Attempted to free camera, retrying...")
             except:
-                print("[WARN] Could not free camera resources automatically")
-                print("[INFO] You may need to manually kill the process or wait for it to finish")
+                logger.warning("Could not free camera resources automatically")
+                logger.info("You may need to manually kill the process or wait for it to finish")
     except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError):
         # lsof/pkill not available or timeout - continue anyway
         pass
     
     # Try GStreamer first (proven to work on Jetson)
     if use_gstreamer:
-        print("[INFO] Attempting to open camera with GStreamer pipeline (proven method from simple_recorder.py)...")
+        logger.info("Attempting to open camera with GStreamer pipeline (proven method from simple_recorder.py)...")
         try:
             # Camera tuning parameters (from simple_recorder.py - tested on Jetson)
             CAMERA_EXPOSURE_TIME = 250000  # microseconds
@@ -150,8 +169,8 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
                     'appsink max-buffers=1 drop=true'
                 ).format(camera_props, source_int, width, height)
             
-            print("[DEBUG] GStreamer pipeline: {}".format(pipeline))
-            print("[DEBUG] Creating VideoCapture with CAP_GSTREAMER...")
+            logger.debug("GStreamer pipeline: {}".format(pipeline))
+            logger.debug("Creating VideoCapture with CAP_GSTREAMER...")
             
             # CRITICAL: Add small delay before opening camera
             # Sometimes camera needs a moment to be ready after previous use
@@ -159,16 +178,16 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
             time.sleep(0.5)
             
             cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-            print("[DEBUG] VideoCapture.isOpened() = {}".format(cap.isOpened()))
+            logger.debug("VideoCapture.isOpened() = {}".format(cap.isOpened()))
             
             # CRITICAL: If "Failed to create CaptureSession", wait a bit and retry once
             if not cap.isOpened():
-                print("[WARN] First attempt failed, waiting 1 second and retrying...")
+                logger.warning("First attempt failed, waiting 1 second and retrying...")
                 time.sleep(1.0)
                 if cap:
                     cap.release()
                 cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-                print("[DEBUG] Retry - VideoCapture.isOpened() = {}".format(cap.isOpened()))
+                logger.debug("Retry - VideoCapture.isOpened() = {}".format(cap.isOpened()))
             
             if cap.isOpened():
                 # Test read to verify camera actually works (with timeout)
@@ -186,17 +205,17 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
                         break
                 
                 if ret and test_frame is not None:
-                    print("[INFO] Camera opened successfully using GStreamer (with tuning parameters)")
+                    logger.info("Camera opened successfully using GStreamer (with tuning parameters)")
                     return cap
                 else:
-                    print("[WARN] GStreamer opened but cannot read frames after 5 attempts, falling back to OpenCV")
+                    logger.warning("GStreamer opened but cannot read frames after 5 attempts, falling back to OpenCV")
                     cap.release()
                     cap = None
             else:
-                print("[WARN] GStreamer failed to open camera, falling back to OpenCV")
+                logger.warning("GStreamer failed to open camera, falling back to OpenCV")
                 cap = None
         except Exception as e:
-            print("[WARN] GStreamer error: {}, falling back to OpenCV".format(e))
+            logger.warning("GStreamer error: {}, falling back to OpenCV".format(e))
             if cap:
                 try:
                     cap.release()
@@ -206,9 +225,9 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
     
     # Fallback to standard OpenCV VideoCapture
     if cap is None:
-        print("[INFO] Falling back to standard OpenCV VideoCapture...")
+        logger.info("Falling back to standard OpenCV VideoCapture...")
         try:
-            print("[DEBUG] Creating VideoCapture with source={} (standard OpenCV)...".format(source_int))
+            logger.debug("Creating VideoCapture with source={} (standard OpenCV)...".format(source_int))
             cap = cv2.VideoCapture(source_int)
             if cap.isOpened():
                 # Set properties
@@ -221,17 +240,26 @@ def open_capture(source, width=1280, height=720, fps=30, use_gstreamer=True):
                 if ret and test_frame is not None:
                     actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                     actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                    print("[INFO] Camera opened successfully using OpenCV (actual resolution: {}x{})".format(actual_width, actual_height))
+                    logger.info("Camera opened successfully using OpenCV (actual resolution: {}x{})".format(actual_width, actual_height))
                     return cap
                 else:
-                    print("[ERROR] Camera opened but cannot read frames")
+                    logger.error("Camera opened but cannot read frames")
+                    # Keep critical error print for production mode visibility
+                    if not DEBUG_MODE:
+                        print("[ERROR] Camera opened but cannot read frames")
                     cap.release()
                     return None
             else:
-                print("[ERROR] Failed to open camera source: {}".format(source_int))
+                logger.error("Failed to open camera source: {}".format(source_int))
+                # Keep critical error print for production mode visibility
+                if not DEBUG_MODE:
+                    print("[ERROR] Failed to open camera source: {}".format(source_int))
                 return None
         except Exception as e:
-            print("[ERROR] OpenCV camera error: {}".format(e))
+            logger.error("OpenCV camera error: {}".format(e))
+            # Keep critical error print for production mode visibility
+            if not DEBUG_MODE:
+                print("[ERROR] OpenCV camera error: {}".format(e))
             return None
     
     return cap
@@ -259,15 +287,15 @@ class LiveWireDetector:
             engine_path = model_path.with_suffix('.engine')
             # Auto-build engine if it doesn't exist (like test_with_images.py)
             if not engine_path.exists():
-                print("[INFO] TensorRT engine not found at '{}'.".format(engine_path))
-                print("[INFO] Attempting to build engine from ONNX model...")
+                logger.info("TensorRT engine not found at '{}'.".format(engine_path))
+                logger.info("Attempting to build engine from ONNX model...")
                 if not model_path.exists():
                     raise FileNotFoundError(
                         "ONNX model not found at '{}'. Cannot build engine.".format(model_path)
                     )
                 
                 if build_engine(model_path, engine_path):
-                    print("[OK] Successfully built TensorRT engine!")
+                    logger.info("Successfully built TensorRT engine!")
                 else:
                     raise RuntimeError(
                         "Failed to build TensorRT engine from {}. "
@@ -513,7 +541,7 @@ def parse_args():
                 model_config = json.load(f)
                 default_engine_path = str(SCRIPT_DIR / model_config['tensorrt_engine_path'])
         except Exception as e:
-            print(f"[WARN] Failed to load model_config.json: {e}")
+            logger.warning("Failed to load model_config.json: {}".format(e))
     
     parser.add_argument(
         "--model",
@@ -539,11 +567,14 @@ def main():
     # 1. Initialize the TensorRT detector
     engine_path = Path(args.model)
     if not engine_path.exists():
-        print("[ERROR] TensorRT engine not found at {}".format(engine_path))
+        logger.error("TensorRT engine not found at {}".format(engine_path))
+        # Keep critical error print for production mode visibility
+        if not DEBUG_MODE:
+            print("[ERROR] TensorRT engine not found at {}".format(engine_path))
         return
         
     detector = TRTDetector(str(engine_path))
-    print("[OK] TensorRT Detector initialized successfully.")
+    logger.info("TensorRT Detector initialized successfully.")
     
     # 2. Setup camera capture
     try:
@@ -553,12 +584,15 @@ def main():
         
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
-        print("[ERROR] Could not open video source: {}".format(source))
+        logger.error("Could not open video source: {}".format(source))
+        # Keep critical error print for production mode visibility
+        if not DEBUG_MODE:
+            print("[ERROR] Could not open video source: {}".format(source))
         return
     
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
-    print("[INFO] Video source opened: {}".format(source))
+    logger.info("Video source opened: {}".format(source))
 
     # 3. Main loop
     fps_start_time = time.perf_counter()
@@ -568,7 +602,7 @@ def main():
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("[INFO] End of video stream or camera disconnected.")
+            logger.info("End of video stream or camera disconnected.")
             break
 
         # Convert frame to grayscale 3-channel (model expects 3-channel grayscale)
@@ -607,7 +641,7 @@ def main():
     # 4. Cleanup
     cap.release()
     cv2.destroyAllWindows()
-    print("[INFO] Cleanup complete.")
+    logger.info("Cleanup complete.")
 
 if __name__ == "__main__":
     main()

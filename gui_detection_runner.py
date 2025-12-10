@@ -482,9 +482,9 @@ class DetectionGUI:
             
         except Exception as e:
             logger.error("Failed to update threshold for {}: {}".format(class_name, e))
-        # Keep critical error print for production mode visibility
-        if not DEBUG_MODE:
-            print("[ERROR] Failed to update threshold for {}: {}".format(class_name, e))
+            # Keep critical error print for production mode visibility
+            if not DEBUG_MODE:
+                print("[ERROR] Failed to update threshold for {}: {}".format(class_name, e))
     
     def _debounced_save_thresholds(self):
         """Debounced save thresholds (called after user stops dragging)"""
