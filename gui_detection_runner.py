@@ -242,25 +242,6 @@ class DetectionGUI:
         control_frame = ttk.LabelFrame(main_frame, text="Control Panel", padding="5")
         control_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
         
-        # Session controls
-        session_frame = ttk.Frame(control_frame)
-        session_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Label(session_frame, text="Session:").pack(side=tk.LEFT, padx=(0, 5))
-        self.start_btn = ttk.Button(session_frame, text="Start Session", 
-                                    command=self.start_session, state=tk.DISABLED)
-        self.start_btn.pack(side=tk.LEFT, padx=2)
-        self.stop_btn = ttk.Button(session_frame, text="Stop Session", 
-                                   command=self.stop_session, state=tk.DISABLED)
-        self.stop_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.session_status_label = ttk.Label(session_frame, text="Status: Stopped", 
-                                              foreground="gray")
-        self.session_status_label.pack(side=tk.LEFT, padx=10)
-        
-        # Store session start time for duration calculation
-        self.session_start_time = None
-        
         # Status display
         status_frame = ttk.Frame(control_frame)
         status_frame.pack(fill=tk.X, pady=(0, 5))
@@ -301,6 +282,25 @@ class DetectionGUI:
         # Create threshold sliders container
         self.threshold_container = ttk.Frame(threshold_frame)
         self.threshold_container.pack(fill=tk.X)
+        
+        # Session controls (placed directly above Session Timer Monitor)
+        session_frame = ttk.Frame(control_frame)
+        session_frame.pack(fill=tk.X, pady=(5, 5))
+        
+        ttk.Label(session_frame, text="Session:").pack(side=tk.LEFT, padx=(0, 5))
+        self.start_btn = ttk.Button(session_frame, text="Start Session", 
+                                    command=self.start_session, state=tk.DISABLED)
+        self.start_btn.pack(side=tk.LEFT, padx=2)
+        self.stop_btn = ttk.Button(session_frame, text="Stop Session", 
+                                   command=self.stop_session, state=tk.DISABLED)
+        self.stop_btn.pack(side=tk.LEFT, padx=2)
+        
+        self.session_status_label = ttk.Label(session_frame, text="Status: Stopped", 
+                                              foreground="gray")
+        self.session_status_label.pack(side=tk.LEFT, padx=10)
+        
+        # Store session start time for duration calculation
+        self.session_start_time = None
         
         # Session Timer Monitor section
         log_frame = ttk.LabelFrame(control_frame, text="Session Timer Monitor", padding="5")
